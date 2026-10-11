@@ -284,6 +284,10 @@ export class MetaCapiService {
         .in('checkout_integration_id', integrationIds)
         .eq('status', 'approved')
         .eq('is_order_bump', false)
+        // Só o que chegou por webhook. Venda importada (histórico) já
+        // aconteceu fora da janela do Meta ou foi enviada à mão, e disparar
+        // por ela seria Purchase duplicado ou com data inventada.
+        .eq('source', 'webhook')
         .lt('created_at', new Date(now - BUYER_ORDER_WINDOW_MS).toISOString())
         .gte('created_at', new Date(now - 24 * 3600_000).toISOString())
         .order('created_at', { ascending: true })

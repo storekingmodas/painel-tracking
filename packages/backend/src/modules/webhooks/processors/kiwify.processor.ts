@@ -335,6 +335,10 @@ export class KiwifyProcessor {
         null,
       customer_name: customer.full_name || customer.name || null,
       customer_email: customer.email || null,
+      // Era lido só para deduzir o estado e descartado: a venda ficava sem
+      // telefone e o Purchase da CAPI saía sem `ph`, a chave que mais pesa
+      // na correspondência depois do e-mail.
+      customer_phone: customerPhone,
       amount: Number(amount),
       currency: 'BRL',
       status,
