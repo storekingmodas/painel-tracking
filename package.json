@@ -1,0 +1,20 @@
+{
+  "name": "sentinel",
+  "private": true,
+  "packageManager": "npm@10.9.2",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "dev:frontend": "turbo dev --filter=@sentinel/frontend",
+    "dev:backend": "turbo dev --filter=@sentinel/backend",
+    "lint": "turbo lint",
+    "test": "turbo test"
+  },
+  "devDependencies": {
+    "@vercel/node": "^5.10.1",
+    "turbo": "^2.4.0"
+  }
+}

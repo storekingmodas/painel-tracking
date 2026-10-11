@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "dev": { "persistent": true, "cache": false },
+    "build": {
+      "outputs": ["dist/**"],
+      "env": ["SUPABASE_URL", "SUPABASE_ANON_KEY", "VITE_*"]
+    },
+    "lint": {},
+    "test": {}
+  }
+}
