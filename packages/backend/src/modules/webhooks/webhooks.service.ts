@@ -8,6 +8,7 @@ import {
   getStateFromPhone,
   getStateFromDDD,
 } from '../../shared/helpers/ddd-to-state';
+import { extractAdIdFromValue } from './processors/hotmart-tracking.util';
 
 export interface MatchResult {
   campaign_id: string | null;
@@ -33,17 +34,29 @@ export class WebhooksService {
   }
 
   /**
-   * Extracts the ad_id from tracking parameters based on priority
+   * O primeiro id NUMÉRICO entre os parâmetros de rastreio, nesta ordem.
+   *
+   * Antes devolvia o primeiro campo preenchido, e o utm_term vinha na frente
+   * do utm_content: com o padrão {{placement}} no utm_term, a venda ficava
+   * com ad_id = "Instagram_Stories" e nunca casava com o anúncio. Agora cada
+   * candidato só vale se tiver um id de verdade (inteiro ou dentro de um
+   * pacote com | ou /); sem nenhum, a venda fica sem anúncio — o que aparece
+   * como orgânica, em vez de errada sem aviso.
    */
   extractAdId(tracking: Record<string, any>): string | null {
-    return (
-      tracking?.ad_id ||
-      tracking?.utm_term ||
-      tracking?.utm_content ||
-      tracking?.src ||
-      tracking?.sck ||
-      null
-    );
+    const candidates = [
+      tracking?.ad_id,
+      tracking?.utm_content,
+      tracking?.utm_term,
+      tracking?.src,
+      tracking?.sck,
+    ];
+    for (const raw of candidates) {
+      if (raw == null) continue;
+      const id = extractAdIdFromValue(String(raw));
+      if (id) return id;
+    }
+    return null;
   }
 
   /**

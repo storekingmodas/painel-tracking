@@ -26,6 +26,7 @@ import {
   WebhookContext,
   webhookContext,
 } from '../../shared/helpers/webhook-context';
+import { BUYER_GROUPED_PLATFORMS } from '../../shared/constants/buyer-order';
 
 /** All checkout platforms processed directly (no queue). */
 const QUEUED_PLATFORMS = new Set([
@@ -123,7 +124,12 @@ export class WebhookQueueService {
     };
     return webhookContext.run(ctx, async () => {
       const result = await this.dispatchDirect(data);
-      if (ctx.approvedSaleIds.length > 0) {
+      if ((BUYER_GROUPED_PLATFORMS as readonly string[]).includes(data.platform)) {
+        // O Purchase desta venda espera a janela do pedido (bumps chegando
+        // em webhooks próprios); aproveita a chamada para mandar os pedidos
+        // de outros compradores que já fecharam.
+        await this.metaCapi.flushDeferredPurchases();
+      } else if (ctx.approvedSaleIds.length > 0) {
         await this.metaCapi.sendPurchases(ctx.approvedSaleIds);
       }
       return result;

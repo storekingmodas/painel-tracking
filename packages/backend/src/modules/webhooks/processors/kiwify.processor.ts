@@ -324,7 +324,9 @@ export class KiwifyProcessor {
       customer_state: customerState,
       customer_city: customerCity,
       customer_country: customerCountry,
-      ad_id: adId || utmTerm || utmContent || utmSource || null,
+      // Só o id numérico (extractAdId). Cair num utm de texto gravava o
+      // posicionamento como se fosse o anúncio.
+      ad_id: adId,
       product_name:
         product.product_name ||
         product.name ||
@@ -368,6 +370,12 @@ export class KiwifyProcessor {
 
     // Route through SalesService for plan-limit enforcement
     const insertedSale = await this.salesService.upsertFromWebhook(saleData);
+
+    // Bump e upsell chegam como vendas soltas: junta com a compra principal
+    // do mesmo comprador (ver SalesService.groupWithBuyerOrder).
+    if (insertedSale?.id && status === 'approved') {
+      await this.salesService.groupWithBuyerOrder(insertedSale.id);
+    }
 
     if (insertedSale?.id) {
       this.webhooksService.matchAndUpdateSale(insertedSale.id, userId, {

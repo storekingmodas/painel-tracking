@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { absoluteApiUrl } from '@/lib/apiUrl';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useToast } from '@/hooks/use-toast';
 import { CheckoutIntegration, CheckoutPlatform } from '@/types/checkout';
 import { useWorkspaceContext } from '@/contexts/WorkspaceContext';
 import { useQueryClient } from '@tanstack/react-query';
-
-const WEBHOOK_DOMAIN = 'https://api.sentinelatracker.com.br';
 
 export interface SaveIntegrationParams {
   id?: string;
@@ -30,8 +29,10 @@ export function useCheckoutIntegrations() {
 
   const effectiveUserId = isImpersonating && target ? target.userId : user?.id;
 
+  // A mesma URL que a tela mostra para colar no checkout (CheckoutConfigModal).
+  // Antes era um domínio fixo de outra instalação, gravado em toda integração.
   const generateWebhookUrl = (platform: CheckoutPlatform): string => {
-    return `${WEBHOOK_DOMAIN}/webhook-${platform}`;
+    return `${absoluteApiUrl()}/webhooks/${platform}`;
   };
 
   const fetchIntegrations = useCallback(async () => {

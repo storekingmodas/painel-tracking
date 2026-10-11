@@ -30,14 +30,17 @@ export class EmailService {
       return { success: true, skipped: true };
     }
 
+    // Endereço do painel e remetente são da instalação, nunca fixos no código:
+    // o modelo vinha com o domínio de quem o escreveu nos dois.
     const resendApiKey = this.config.get<string>('RESEND_API_KEY');
-    if (!resendApiKey) {
-      throw new Error('RESEND_API_KEY not configured');
+    const siteUrl = this.config.get<string>('APP_URL')?.replace(/\/+$/, '');
+    const emailFrom = this.config.get<string>('EMAIL_FROM');
+    if (!resendApiKey || !siteUrl || !emailFrom) {
+      throw new Error('E-mail nao configurado: defina RESEND_API_KEY, APP_URL e EMAIL_FROM');
     }
 
     const displayName = name || 'Usuario';
     const defaultPassword = 'acesso123';
-    const siteUrl = 'https://app.sentinelatracker.com.br';
 
     const htmlContent = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -131,7 +134,7 @@ export class EmailService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Sentinela Tracker <noreply@contato.sentinelatracker.com.br>',
+        from: emailFrom,
         to: [email],
         subject: `Bem-vindo ao Painel de Tracking, ${displayName}!`,
         html: htmlContent,

@@ -4,6 +4,7 @@ import { CacheService } from '../../shared/services/cache.service';
 import { EncryptionService } from '../../shared/services/encryption.service';
 import { buildUserData, MetaUserData, explainUserData, UserDataInput } from './meta-user-data';
 import { META_API_VERSION } from '../../shared/constants/meta-api';
+import { BUYER_GROUPED_PLATFORMS, BUYER_ORDER_WINDOW_MS } from '../../shared/constants/buyer-order';
 
 const GRAPH_VERSION = META_API_VERSION;
 const CONFIG_TTL_MS = 60_000;
@@ -250,6 +251,77 @@ export class MetaCapiService {
       }
     } catch (err: any) {
       this.logger.warn(`sendPurchases: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Purchase das plataformas agrupadas pelo comprador (BUYER_GROUPED_PLATFORMS),
+   * que não saem no webhook: espera a janela do pedido fechar e manda um
+   * Purchase por pedido, com a principal e os bumps somados.
+   *
+   * Chamado a cada minuto (pg_cron → /capi/flush-cron), ao fim de todo
+   * webhook dessas plataformas e no cron diário — o primeiro que pegar o
+   * pedido manda; a reserva em capi_events barra os outros. Olha só as
+   * últimas 24 h: o que tiver ficado para trás disso é exceção a ver à mão,
+   * não algo a disparar sozinho dias depois. Nunca lança.
+   */
+  async flushDeferredPurchases(): Promise<{ due: number }> {
+    try {
+      const client = this.supabase.getClient();
+      const { data: integrations, error: intError } = await client
+        .from('checkout_integrations')
+        .select('id')
+        .in('platform', [...BUYER_GROUPED_PLATFORMS]);
+      if (intError) throw new Error(intError.message);
+      const integrationIds = (integrations ?? []).map((i) => i.id);
+      if (integrationIds.length === 0) return { due: 0 };
+
+      const now = Date.now();
+      const { data: mains, error } = await client
+        .from('sales')
+        .select('id, workspace_id, external_id, order_external_id')
+        .in('checkout_integration_id', integrationIds)
+        .eq('status', 'approved')
+        .eq('is_order_bump', false)
+        .lt('created_at', new Date(now - BUYER_ORDER_WINDOW_MS).toISOString())
+        .gte('created_at', new Date(now - 24 * 3600_000).toISOString())
+        .order('created_at', { ascending: true })
+        .limit(500);
+      if (error) throw new Error(error.message);
+
+      const orderKey = (m: any) => String(m.order_external_id || m.external_id || m.id);
+      const pending = (mains ?? []).filter((m) => m.workspace_id);
+      const sent = new Set<string>();
+      for (let i = 0; i < pending.length; i += 100) {
+        const chunk = pending.slice(i, i + 100);
+        const { data: done } = await client
+          .from('capi_events')
+          .select('workspace_id, event_id')
+          .eq('event_name', 'Purchase')
+          .in('event_id', chunk.map((m) => `purchase:${orderKey(m)}`));
+        for (const d of done ?? []) sent.add(`${d.workspace_id}|${d.event_id}`);
+      }
+
+      const due = pending.filter((m) => !sent.has(`${m.workspace_id}|purchase:${orderKey(m)}`));
+      for (const main of due) {
+        const { data: lines } = await client
+          .from('sales')
+          .select(
+            'id, workspace_id, external_id, order_external_id, status, amount, currency, product_name, customer_name, customer_email, customer_phone, customer_city, customer_state, customer_country, session_id, visitor_id, sold_at, metadata, is_order_bump',
+          )
+          .eq('workspace_id', main.workspace_id)
+          .eq('status', 'approved')
+          .or(`id.eq.${main.id},order_external_id.eq.${orderKey(main)}`);
+        // A principal primeiro: é dela o event_id, o produto e o horário.
+        const ordered = [...(lines ?? [])].sort(
+          (a, b) => Number(a.is_order_bump) - Number(b.is_order_bump) || String(a.sold_at).localeCompare(String(b.sold_at)),
+        );
+        if (ordered.length > 0) await this.sendPurchase(ordered);
+      }
+      return { due: due.length };
+    } catch (err: any) {
+      this.logger.warn(`flushDeferredPurchases: ${err?.message}`);
+      return { due: 0 };
     }
   }
 

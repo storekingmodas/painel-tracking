@@ -116,12 +116,28 @@ export class MetaCapiCronController {
 
   @Get('retry-cron')
   async retryCron(@Headers('authorization') authorization: string | undefined) {
+    this.assertCron(authorization);
+    const flushed = await this.capi.flushDeferredPurchases();
+    return { ...(await this.capi.retryFailed()), deferred: flushed.due };
+  }
+
+  /**
+   * Purchase dos pedidos agrupados pelo comprador (Kiwify), a cada minuto.
+   * A Vercel Hobby só agenda cron diário; quem chama esta rota é o pg_cron
+   * do Supabase (supabase/agendar-envio-purchase.sql), com o mesmo segredo.
+   */
+  @Get('flush-cron')
+  async flushCron(@Headers('authorization') authorization: string | undefined) {
+    this.assertCron(authorization);
+    return this.capi.flushDeferredPurchases();
+  }
+
+  private assertCron(authorization: string | undefined) {
     const secret = this.config.get<string>('CRON_SECRET');
     const expected = Buffer.from(`Bearer ${secret ?? ''}`);
     const got = Buffer.from(authorization ?? '');
     if (!secret || got.length !== expected.length || !timingSafeEqual(got, expected)) {
       throw new UnauthorizedException();
     }
-    return this.capi.retryFailed();
   }
 }

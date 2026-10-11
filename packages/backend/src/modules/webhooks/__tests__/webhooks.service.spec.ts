@@ -32,6 +32,24 @@ describe('WebhooksService', () => {
     service = module.get<WebhooksService>(WebhooksService);
   });
 
+  describe('extractAdId', () => {
+    it('pula o posicionamento em texto e fica com o id numerico do utm_content', () => {
+      // Venda real da Kiwify: utm_term={{placement}}, utm_content={{ad.id}}.
+      expect(
+        service.extractAdId({ utm_term: 'Instagram_Stories', utm_content: '120246505866090138', src: 'ig' }),
+      ).toBe('120246505866090138');
+    });
+
+    it('acha o id dentro de um pacote com pipe', () => {
+      expect(service.extractAdId({ utm_content: 'CTV 59|120239247454720535' })).toBe('120239247454720535');
+    });
+
+    it('sem nenhum id numerico, devolve null em vez de um texto qualquer', () => {
+      expect(service.extractAdId({ utm_term: 'Instagram_Reels', src: 'ig', sck: 'stl_abc' })).toBeNull();
+      expect(service.extractAdId({})).toBeNull();
+    });
+  });
+
   describe('matchAndUpdateSale', () => {
     it('should be defined', () => {
       expect(service.matchAndUpdateSale).toBeDefined();

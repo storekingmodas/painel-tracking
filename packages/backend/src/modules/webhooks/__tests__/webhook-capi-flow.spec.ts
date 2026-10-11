@@ -98,6 +98,24 @@ describe('webhook → venda → Purchase', () => {
     expect(capi.sendPurchases).toHaveBeenCalledWith(['sale-1']);
   });
 
+  it('Kiwify: o Purchase nao sai no webhook, espera o pedido fechar (bumps chegam em webhooks proprios)', async () => {
+    const processors = Array.from({ length: 16 }, () => ({ process: jest.fn() }));
+    processors[1].process.mockImplementation(async () => {
+      webhookContext.getStore()!.approvedSaleIds.push('sale-1');
+      return { status: 200, body: { ok: true } };
+    });
+    const capi = {
+      sendPurchases: jest.fn().mockResolvedValue(undefined),
+      flushDeferredPurchases: jest.fn().mockResolvedValue({ due: 0 }),
+    };
+    const service = new (WebhookQueueService as any)({}, ...processors, {}, capi) as WebhookQueueService;
+
+    await service.processDirect({ platform: 'kiwify', body: {}, authToken: null, rawBody: '{}' });
+
+    expect(capi.sendPurchases).not.toHaveBeenCalled();
+    expect(capi.flushDeferredPurchases).toHaveBeenCalledTimes(1);
+  });
+
   it('sem venda aprovada nova, nao chama a CAPI', async () => {
     const { service, capi } = build(async () => ({ status: 200, body: {} }));
     await service.processDirect({ platform: 'hotmart', body: {}, authToken: 't' });

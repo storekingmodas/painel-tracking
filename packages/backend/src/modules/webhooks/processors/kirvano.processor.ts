@@ -171,7 +171,8 @@ export class KirvanoProcessor {
       customer_state: customerState,
       customer_city: customerCity,
       customer_country: customerCountry,
-      ad_id: adId || utmTerm || utmContent || null,
+      // Só o id numérico (extractAdId): ver a nota na Kiwify.
+      ad_id: adId,
       product_name: product.name || sale.product_name || null,
       customer_name: customer.name || customer.full_name || null,
       customer_email: customer.email || null,

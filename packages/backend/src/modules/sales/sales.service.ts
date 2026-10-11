@@ -5,6 +5,7 @@ import { PlanLimitsService, SaleDecision } from '../plan-limits/plan-limits.serv
 import { StripeOverageService } from '../stripe/stripe-overage.service';
 import { VisitorMatchingService } from '../tracking/visitor-matching.service';
 import { webhookContext } from '../../shared/helpers/webhook-context';
+import { BUYER_GROUPED_PLATFORMS, BUYER_ORDER_WINDOW_MS } from '../../shared/constants/buyer-order';
 
 export interface SalesFilters {
   from?: string;
@@ -95,6 +96,74 @@ export class SalesService {
     // 7. Invalidate counts.
     await this.planLimits.invalidate(sale.user_id);
     return saved;
+  }
+
+  /**
+   * Junta num pedido só as compras aprovadas da mesma pessoa (e-mail) na
+   * mesma área, feitas dentro de BUYER_ORDER_WINDOW_MS da primeira.
+   *
+   * A primeira (sold_at, depois chegada) é a principal; as outras viram
+   * is_order_bump e todas recebem order_external_id = external_id da
+   * principal. É a convenção que o resto do painel já usa (a Hubla grava uma
+   * linha por produto): as contagens fazem DISTINCT por pedido e somam o
+   * valor das linhas, e a CAPI manda um Purchase por pedido com a soma.
+   *
+   * Recalcula o grupo inteiro a cada chamada, então a ordem de chegada dos
+   * webhooks não importa e chamar de novo não muda nada. Nunca lança: a venda
+   * já está gravada.
+   */
+  async groupWithBuyerOrder(saleId: string): Promise<void> {
+    try {
+      const client = this.supabase.getClient();
+      const { data: sale } = await client
+        .from('sales')
+        .select('id, workspace_id, customer_email, sold_at, status')
+        .eq('id', saleId)
+        .maybeSingle();
+      if (!sale?.workspace_id || !sale.customer_email || !sale.sold_at || sale.status !== 'approved') return;
+
+      const { data: integrations } = await client
+        .from('checkout_integrations')
+        .select('id')
+        .eq('workspace_id', sale.workspace_id)
+        .in('platform', [...BUYER_GROUPED_PLATFORMS]);
+      const integrationIds = (integrations ?? []).map((i) => i.id);
+      if (integrationIds.length === 0) return;
+
+      const t = new Date(sale.sold_at).getTime();
+      const { data: rows, error } = await client
+        .from('sales')
+        .select('id, external_id, sold_at, created_at, order_external_id, is_order_bump')
+        .eq('workspace_id', sale.workspace_id)
+        .eq('customer_email', sale.customer_email)
+        .eq('status', 'approved')
+        .in('checkout_integration_id', integrationIds)
+        .gte('sold_at', new Date(t - BUYER_ORDER_WINDOW_MS).toISOString())
+        .lte('sold_at', new Date(t + BUYER_ORDER_WINDOW_MS).toISOString());
+      if (error) throw new Error(error.message);
+
+      const time = (r: { sold_at: string }) => new Date(r.sold_at).getTime();
+      const sorted = [...(rows ?? [])].sort(
+        (a, b) => time(a) - time(b) || new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+      const main = sorted[0];
+      if (!main) return;
+      const group = sorted.filter((r) => time(r) - time(main) <= BUYER_ORDER_WINDOW_MS);
+      // A venda nova ficou depois da janela da primeira: é um pedido próprio.
+      if (!group.some((r) => r.id === saleId)) return;
+
+      for (const row of group) {
+        const orderKey = main.external_id;
+        const isBump = row.id !== main.id;
+        if (row.order_external_id === orderKey && row.is_order_bump === isBump) continue;
+        await client
+          .from('sales')
+          .update({ order_external_id: orderKey, is_order_bump: isBump })
+          .eq('id', row.id);
+      }
+    } catch (err: any) {
+      this.logger.warn(`groupWithBuyerOrder ${saleId}: ${err?.message}`);
+    }
   }
 
   private async findByExternalId(
