@@ -13,8 +13,13 @@ const REF = 'stl_ffffffff-0000-4111-8222-333333333333';
 describe('webhook → venda → Purchase', () => {
   function build(processImpl: (...args: any[]) => Promise<any>) {
     const processors = Array.from({ length: 16 }, () => ({ process: jest.fn() }));
-    processors[0].process.mockImplementation(processImpl); // hotmart
-    const capi = { sendPurchases: jest.fn().mockResolvedValue(undefined) };
+    // Kirvano: Purchase na hora, no fim do webhook. Hotmart e Kiwify esperam o
+    // pedido fechar (DEFERRED_PURCHASE_PLATFORMS) e têm teste próprio abaixo.
+    processors[2].process.mockImplementation(processImpl); // kirvano
+    const capi = {
+      sendPurchases: jest.fn().mockResolvedValue(undefined),
+      flushDeferredPurchases: jest.fn().mockResolvedValue({ due: 0 }),
+    };
     const service = new (WebhookQueueService as any)({}, ...processors, {}, capi) as WebhookQueueService;
     return { service, capi };
   }
@@ -49,7 +54,7 @@ describe('webhook → venda → Purchase', () => {
     capi.sendPurchases.mockImplementation(async () => order.push('capi'));
 
     const rawBody = JSON.stringify({ data: { purchase: { origin: { sck: REF } } } });
-    const result = await service.processDirect({ platform: 'hotmart', body: JSON.parse(rawBody), authToken: 't', rawBody });
+    const result = await service.processDirect({ platform: 'kirvano', body: JSON.parse(rawBody), authToken: 't', rawBody });
 
     expect(result).toEqual({ status: 200, body: { ok: true } });
     expect(persisted[0].metadata).toEqual({ x: 1, tracking_ref: REF });
@@ -98,9 +103,12 @@ describe('webhook → venda → Purchase', () => {
     expect(capi.sendPurchases).toHaveBeenCalledWith(['sale-1']);
   });
 
-  it('Kiwify: o Purchase nao sai no webhook, espera o pedido fechar (bumps chegam em webhooks proprios)', async () => {
+  it.each([
+    ['kiwify', 1],
+    ['hotmart', 0],
+  ])('%s: o Purchase nao sai no webhook, espera o pedido fechar (bumps chegam em webhooks proprios)', async (platform, index) => {
     const processors = Array.from({ length: 16 }, () => ({ process: jest.fn() }));
-    processors[1].process.mockImplementation(async () => {
+    processors[index as number].process.mockImplementation(async () => {
       webhookContext.getStore()!.approvedSaleIds.push('sale-1');
       return { status: 200, body: { ok: true } };
     });
@@ -110,7 +118,7 @@ describe('webhook → venda → Purchase', () => {
     };
     const service = new (WebhookQueueService as any)({}, ...processors, {}, capi) as WebhookQueueService;
 
-    await service.processDirect({ platform: 'kiwify', body: {}, authToken: null, rawBody: '{}' });
+    await service.processDirect({ platform: platform as string, body: {}, authToken: 't', rawBody: '{}' });
 
     expect(capi.sendPurchases).not.toHaveBeenCalled();
     expect(capi.flushDeferredPurchases).toHaveBeenCalledTimes(1);
@@ -118,7 +126,7 @@ describe('webhook → venda → Purchase', () => {
 
   it('sem venda aprovada nova, nao chama a CAPI', async () => {
     const { service, capi } = build(async () => ({ status: 200, body: {} }));
-    await service.processDirect({ platform: 'hotmart', body: {}, authToken: 't' });
+    await service.processDirect({ platform: 'kirvano', body: {}, authToken: 't' });
     expect(capi.sendPurchases).not.toHaveBeenCalled();
   });
 
@@ -134,8 +142,8 @@ describe('webhook → venda → Purchase', () => {
     const refA = 'stl_aaaaaaaa-0000-4111-8222-333333333333';
     const refB = 'stl_bbbbbbbb-0000-4111-8222-333333333333';
     await Promise.all([
-      service.processDirect({ platform: 'hotmart', body: { name: 'a', delay: 20, sck: refA }, authToken: 't' }),
-      service.processDirect({ platform: 'hotmart', body: { name: 'b', delay: 5, sck: refB }, authToken: 't' }),
+      service.processDirect({ platform: 'kirvano', body: { name: 'a', delay: 20, sck: refA }, authToken: 't' }),
+      service.processDirect({ platform: 'kirvano', body: { name: 'b', delay: 5, sck: refB }, authToken: 't' }),
     ]);
     expect(seen).toEqual({ a: refA, b: refB });
   });

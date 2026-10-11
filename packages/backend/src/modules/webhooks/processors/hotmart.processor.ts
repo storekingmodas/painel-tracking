@@ -352,10 +352,19 @@ export class HotmartProcessor {
     const soldAt =
       status === 'approved' ? approvedDate || orderDate : orderDate;
 
+    // Order bump: a Hotmart cobra o bump numa transação própria e manda um
+    // webhook para ela. O sinal certo é ter um pai (parent_purchase_transaction)
+    // — `is_order_bump` vem true TAMBÉM na compra principal que recebeu bump,
+    // e confiar nele tiraria o comprador da contagem. O bump entra no pedido
+    // da principal: contagens fazem DISTINCT por pedido e a CAPI soma o valor.
+    const parentTransaction: string | null = purchase.order_bump?.parent_purchase_transaction || null;
+
     const saleData: Record<string, any> = {
       user_id: userId,
       workspace_id: workspaceId,
       external_id: externalId,
+      order_external_id: parentTransaction || externalId,
+      is_order_bump: !!parentTransaction,
       checkout_integration_id: integrationId,
       amount: amount,
       currency: 'BRL',

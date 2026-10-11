@@ -11,6 +11,21 @@ type Parsed = {
   adset_fb_id: string | null;
 };
 
+describe('Hotmart tracking parser: xcod so com o id', () => {
+  it('xcod com o id puro (track.js do outro painel) vira ad_id, nao utm_source', () => {
+    expect(parse('120246505866090138')).toEqual({
+      utm_source: null,
+      utm_medium: null,
+      utm_campaign: null,
+      utm_content: null,
+      utm_term: null,
+      ad_id: '120246505866090138',
+      campaign_fb_id: null,
+      adset_fb_id: null,
+    });
+  });
+});
+
 describe('Hotmart tracking parser (snapshot of legacy behavior)', () => {
   it('parses real Facebook_Mobile_Reels format from the CSV export', () => {
     const xcod = 'Facebook_Mobile_Reels|[AyunoMetabolico] - BIDCAP|N49 -> N52 - 15/04|N50|120242604345070467';

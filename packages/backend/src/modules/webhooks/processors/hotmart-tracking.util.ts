@@ -35,6 +35,10 @@ function extractNumericId(value: string | undefined): string | null {
 export function parseXcod(xcod: string | null): ParsedHotmartTracking {
   if (!xcod) return { ...EMPTY };
 
+  // Só o id do anúncio, sem pacote (é o que o track.js do outro painel põe
+  // no xcod). Lido como pacote, o número ia parar no utm_source.
+  if (/^\d{6,}$/.test(xcod.trim())) return { ...EMPTY, ad_id: xcod.trim() };
+
   const parts = xcod.split('|');
   const utm_source = parts[0] || null;
   const utm_medium =

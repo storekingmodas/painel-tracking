@@ -4,7 +4,7 @@ import { CacheService } from '../../shared/services/cache.service';
 import { EncryptionService } from '../../shared/services/encryption.service';
 import { buildUserData, MetaUserData, explainUserData, UserDataInput } from './meta-user-data';
 import { META_API_VERSION } from '../../shared/constants/meta-api';
-import { BUYER_GROUPED_PLATFORMS, BUYER_ORDER_WINDOW_MS } from '../../shared/constants/buyer-order';
+import { BUYER_ORDER_WINDOW_MS, DEFERRED_PURCHASE_PLATFORMS } from '../../shared/constants/buyer-order';
 
 const GRAPH_VERSION = META_API_VERSION;
 const CONFIG_TTL_MS = 60_000;
@@ -255,8 +255,9 @@ export class MetaCapiService {
   }
 
   /**
-   * Purchase das plataformas agrupadas pelo comprador (BUYER_GROUPED_PLATFORMS),
-   * que não saem no webhook: espera a janela do pedido fechar e manda um
+   * Purchase das plataformas com bump em webhook próprio
+   * (DEFERRED_PURCHASE_PLATFORMS), que não saem no webhook: espera a janela do
+   * pedido fechar e manda um
    * Purchase por pedido, com a principal e os bumps somados.
    *
    * Chamado a cada minuto (pg_cron → /capi/flush-cron), ao fim de todo
@@ -271,7 +272,7 @@ export class MetaCapiService {
       const { data: integrations, error: intError } = await client
         .from('checkout_integrations')
         .select('id')
-        .in('platform', [...BUYER_GROUPED_PLATFORMS]);
+        .in('platform', [...DEFERRED_PURCHASE_PLATFORMS]);
       if (intError) throw new Error(intError.message);
       const integrationIds = (integrations ?? []).map((i) => i.id);
       if (integrationIds.length === 0) return { due: 0 };
