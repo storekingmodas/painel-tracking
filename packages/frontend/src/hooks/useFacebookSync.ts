@@ -129,9 +129,13 @@ export function useFacebookSync() {
     setError(null);
 
     try {
-      const connectionsToSync = connectionsRef.current.length > 0 ? connectionsRef.current : [];
+      // Só as contas ligadas na área. O token enxerga todas as contas do
+      // BM, inclusive de outros projetos; sincronizar as desligadas enchia o
+      // banco de campanhas que nenhuma tela soma (1.174 numa sync, 853 delas
+      // de uma conta de outro negócio).
+      const connectionsToSync = connectionsRef.current.filter((c) => c.is_active !== false);
       if (connectionsToSync.length === 0) {
-        throw new Error('Nenhuma conta de anúncios conectada.');
+        throw new Error('Nenhuma conta de anúncios ligada. Ative uma conta em Integrações.');
       }
 
       if (!silent) {
