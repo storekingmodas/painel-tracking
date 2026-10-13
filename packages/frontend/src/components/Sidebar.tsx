@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -64,6 +65,12 @@ export function Sidebar({ onNavClick, onCollapsedChange }: { onNavClick?: () => 
           >
             {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </Button>
+        </div>
+
+        {/* Área ativa: trocar, criar, renomear. O componente existia sem estar
+            em tela nenhuma, e sem ele não havia como sair da primeira área. */}
+        <div className="border-b border-foreground/5 py-2">
+          <WorkspaceSwitcher collapsed={collapsed} />
         </div>
 
 
