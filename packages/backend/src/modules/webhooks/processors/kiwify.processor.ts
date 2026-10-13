@@ -178,9 +178,19 @@ export class KiwifyProcessor {
 
     if (existingSale) {
       if (status !== existingSale.status) {
+        // Reembolso/chargeback: o valor devolvido entra no relatório do A/B.
+        // A Kiwify devolve o pedido inteiro; o campo de valor parcial, se ela
+        // um dia mandar, tem prioridade.
+        const refunded =
+          status === 'refunded'
+            ? Number(kiwifyBody.refunded_amount ?? kiwifyBody.Commissions?.refunded_amount ?? NaN)
+            : NaN;
         await supabaseAdmin
           .from('sales')
-          .update({ status })
+          .update({
+            status,
+            ...(status === 'refunded' ? { refunded_amount: Number.isFinite(refunded) && refunded > 0 ? refunded / 100 : null } : {}),
+          })
           .eq('id', existingSale.id);
       }
       await supabaseAdmin
@@ -304,6 +314,24 @@ export class KiwifyProcessor {
       }
     }
 
+    // Valores do relatório do A/B, sempre gravados (independem da opção
+    // "valor da comissão", que só decide `amount`). Conferidos no painel
+    // antigo contra venda real: product_base_price 3990, kiwify_fee 648,
+    // my_commission 3342 (centavos). charge_amount inclui os juros do
+    // parcelamento, que ficam com a Kiwify — por isso a base é o bruto.
+    const toBrl = (v: number) => (originalCurrency !== 'BRL' ? convertToBRL(v, exchangeRateUsed) : v);
+    // O repasse vem na moeda de liquidação (BRL para produtor brasileiro),
+    // não na do comprador. Moeda diferente sem cotação: fica vazio.
+    const settlement = String(commissions?.settlement_amount_currency || originalCurrency || 'BRL').toUpperCase();
+    const netToBrl = (v: number): number | null =>
+      settlement === 'BRL' ? v : settlement === originalCurrency ? toBrl(v) : null;
+    const grossRaw = commissions?.product_base_price ? parseKiwifyNumber(commissions.product_base_price) : originalAmount;
+    const netRaw = commissions?.my_commission ? parseKiwifyNumber(commissions.my_commission) : null;
+    const grossAmount = grossRaw > 0 ? Math.round(toBrl(grossRaw) * 100) / 100 : null;
+    const netBrl = netRaw && netRaw > 0 ? netToBrl(netRaw) : null;
+    const netAmount = netBrl != null && Number.isFinite(netBrl) ? Math.round(netBrl * 100) / 100 : null;
+    const feeAmount = grossAmount != null && netAmount != null ? Math.round((grossAmount - netAmount) * 100) / 100 : null;
+
     const address = customer.address || customer.billing_address || {};
     let customerState = this.webhooksService.normalizeState(
       address.state || address.uf,
@@ -340,6 +368,9 @@ export class KiwifyProcessor {
       // na correspondência depois do e-mail.
       customer_phone: customerPhone,
       amount: Number(amount),
+      gross_amount: grossAmount,
+      fee_amount: feeAmount,
+      net_amount: netAmount,
       currency: 'BRL',
       status,
       payment_method: kiwifyBody.payment_method || null,

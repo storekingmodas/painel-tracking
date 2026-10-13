@@ -234,6 +234,46 @@ export class HotmartProcessor {
       }
     }
 
+    // Valores do relatório do A/B (independem de use_commission_value, que só
+    // decide `amount`). Conferido no painel antigo contra o extrato: a linha
+    // MARKETPLACE é a taxa da Hotmart, PRODUCER é o repasse, e as linhas somam
+    // o preço da oferta SEM os juros do parcelamento (que ficam com a Hotmart).
+    // Moeda estrangeira: a própria Hotmart informa a conversão em cada linha.
+    const commissionBrl = async (c: any): Promise<number> => {
+      const value = Number(c?.value || 0);
+      if (!(value > 0)) return 0;
+      const cur = String(c.currency_value || paymentCurrency || 'BRL').toUpperCase();
+      if (cur === 'BRL') return value;
+      if (Number(c.currency_conversion?.converted_value) > 0) return Number(c.currency_conversion.converted_value);
+      if (Number(c.currency_conversion?.conversion_rate) > 0) return convertToBRL(value, Number(c.currency_conversion.conversion_rate));
+      return convertToBRL(value, exchangeRateUsed !== 1.0 ? exchangeRateUsed : await getExchangeRate(cur));
+    };
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    let grossAmount: number | null = null;
+    let feeAmount: number | null = null;
+    let netAmount: number | null = null;
+    // Nunca derruba a venda: sem cotação (ou com payload estranho) os três
+    // ficam vazios e o relatório usa o bruto.
+    try {
+      if (Array.isArray(commissions) && commissions.length > 0) {
+        let gross = 0;
+        let fee = 0;
+        let net = 0;
+        for (const c of commissions) {
+          const v = await commissionBrl(c);
+          gross += v;
+          if (String(c.source).toUpperCase() === 'MARKETPLACE') fee += v;
+          if (String(c.source).toUpperCase() === 'PRODUCER') net += v;
+        }
+        if (gross > 0) grossAmount = round2(gross);
+        if (fee > 0) feeAmount = round2(fee);
+        if (net > 0) netAmount = round2(net);
+      }
+    } catch (err: any) {
+      this.logger.warn(`[Hotmart] bruto/liquido nao calculados: ${err?.message}`);
+      grossAmount = feeAmount = netAmount = null;
+    }
+
     const externalId = purchase.transaction;
     if (!externalId) {
       return { status: 400, body: { error: 'Missing transaction ID' } };
@@ -249,9 +289,12 @@ export class HotmartProcessor {
 
     if (existingSale) {
       if (REFUNDED_EVENTS.has(hotmartEvent)) {
+        // Valor devolvido para o relatório do A/B: o da Hotmart, quando ela
+        // informar (reembolso parcial); senão o preço da oferta inteiro.
+        const partial = Number(purchase.refund?.value ?? purchase.refunded_value ?? NaN);
         await supabaseAdmin
           .from('sales')
-          .update({ status })
+          .update({ status, refunded_amount: Number.isFinite(partial) && partial > 0 ? partial : grossAmount })
           .eq('id', existingSale.id);
         this.logger.log(
           `Updated sale ${existingSale.id} to status: ${status}`,
@@ -383,6 +426,9 @@ export class HotmartProcessor {
       is_order_bump: !!parentTransaction,
       checkout_integration_id: integrationId,
       amount: amount,
+      gross_amount: grossAmount,
+      fee_amount: feeAmount,
+      net_amount: netAmount,
       currency: 'BRL',
       product_name: product.name || null,
       customer_name: buyer.name || null,

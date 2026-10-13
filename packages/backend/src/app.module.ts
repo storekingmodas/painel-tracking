@@ -24,6 +24,7 @@ import { AccountModule } from './modules/account/account.module';
 import { TrackingModule } from './modules/tracking/tracking.module';
 import { MetaCapiModule } from './modules/meta-capi/meta-capi.module';
 import { ProductAreasModule } from './modules/product-areas/product-areas.module';
+import { AbCheckoutModule } from './modules/ab-checkout/ab-checkout.module';
 
 const RATE_LIMIT_TTL_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 60;
@@ -56,6 +57,7 @@ const RATE_LIMIT_MAX_REQUESTS = 60;
     TrackingModule,
     MetaCapiModule,
     ProductAreasModule,
+    AbCheckoutModule,
   ],
   providers: [
     {
