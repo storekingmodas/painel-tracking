@@ -120,6 +120,11 @@ export class AbCheckoutAdminController {
     return this.ab.report(userId, id);
   }
 
+  @Get(':id/test-sales')
+  testSales(@CurrentUser('id') userId: string, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.ab.testSales(userId, id);
+  }
+
   @Get(':id/events')
   events(@CurrentUser('id') userId: string, @Param('id', new ParseUUIDPipe()) id: string, @Query() _q: unknown) {
     return this.ab.events(userId, id);

@@ -7,7 +7,7 @@
 -- Cole no SQL Editor de um projeto Supabase NOVO E VAZIO e execute uma vez.
 -- Se o banco ja tiver algo, rode supabase/reset.sql antes.
 --
--- 6 migration(s), gerado em 2026-10-13.
+-- 7 migration(s), gerado em 2026-10-13.
 -- ============================================================
 
 -- ==================== 20261002120000_base.sql ====================
@@ -8114,4 +8114,31 @@ SELECT
      AND tablename IN ('ab_experiments', 'ab_assignments', 'ab_events') AND rowsecurity) AS tabelas_ab,
   (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'sales'
      AND column_name IN ('gross_amount', 'fee_amount', 'net_amount', 'refunded_amount', 'is_test')) AS colunas_sales;
+
+
+-- ==================== 20261013200000_ab_plataforma_da_venda.sql ====================
+
+-- ============================================================
+-- A/B: plataforma sorteada × plataforma efetiva da venda
+-- ============================================================
+-- A efetiva já está na venda (a integração que mandou o webhook). Aqui fica
+-- a SORTEADA, gravada quando o webhook chega com o código da visita que o
+-- redirecionador mandou ao checkout. Venda cruzada (sorteada numa, comprada
+-- na outra) fica nos dados como veio — o relatório mostra, não descarta.
+--
+-- Só acrescenta colunas vazias. Nenhum dado existente muda.
+
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS ab_experiment_id uuid
+  REFERENCES public.ab_experiments(id) ON DELETE SET NULL;
+ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS ab_assigned_platform text
+  CHECK (ab_assigned_platform IS NULL OR ab_assigned_platform IN ('hotmart', 'kiwify'));
+
+CREATE INDEX IF NOT EXISTS idx_sales_ab_experiment
+  ON public.sales (ab_experiment_id) WHERE ab_experiment_id IS NOT NULL;
+
+-- Conferência: 2 colunas novas e nenhuma venda ligada ainda.
+SELECT
+  (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'sales'
+     AND column_name IN ('ab_experiment_id', 'ab_assigned_platform')) AS colunas_novas,
+  (SELECT count(*) FROM public.sales WHERE ab_experiment_id IS NOT NULL) AS vendas_ligadas;
 

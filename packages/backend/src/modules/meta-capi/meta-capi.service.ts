@@ -233,7 +233,7 @@ export class MetaCapiService {
       const { data: rows, error } = await client
         .from('sales')
         .select(
-          'id, workspace_id, external_id, order_external_id, status, amount, currency, product_name, customer_name, customer_email, customer_phone, customer_city, customer_state, customer_country, session_id, visitor_id, sold_at, metadata',
+          'id, workspace_id, external_id, order_external_id, status, amount, currency, product_name, customer_name, customer_email, customer_phone, customer_city, customer_state, customer_country, session_id, visitor_id, sold_at, metadata, is_test',
         )
         .in('id', saleIds)
         .eq('status', 'approved');
@@ -288,6 +288,7 @@ export class MetaCapiService {
         // aconteceu fora da janela do Meta ou foi enviada à mão, e disparar
         // por ela seria Purchase duplicado ou com data inventada.
         .eq('source', 'webhook')
+        .eq('is_test', false)
         .lt('created_at', new Date(now - BUYER_ORDER_WINDOW_MS).toISOString())
         .gte('created_at', new Date(now - 24 * 3600_000).toISOString())
         .order('created_at', { ascending: true })
@@ -312,7 +313,7 @@ export class MetaCapiService {
         const { data: lines } = await client
           .from('sales')
           .select(
-            'id, workspace_id, external_id, order_external_id, status, amount, currency, product_name, customer_name, customer_email, customer_phone, customer_city, customer_state, customer_country, session_id, visitor_id, sold_at, metadata, is_order_bump',
+            'id, workspace_id, external_id, order_external_id, status, amount, currency, product_name, customer_name, customer_email, customer_phone, customer_city, customer_state, customer_country, session_id, visitor_id, sold_at, metadata, is_order_bump, is_test',
           )
           .eq('workspace_id', main.workspace_id)
           .eq('status', 'approved')
@@ -332,6 +333,12 @@ export class MetaCapiService {
 
   private async sendPurchase(lines: any[]): Promise<void> {
     const first = lines[0];
+    // Pedido de teste (link de teste do A/B, ou marcado na tela): nunca vai
+    // ao pixel de produção. Uma linha de teste basta para barrar o pedido.
+    if (lines.some((l) => l.is_test)) {
+      this.logger.log(`[CAPI] Purchase ${first.order_external_id || first.external_id || first.id} nao enviado: pedido de teste`);
+      return;
+    }
     const config = await this.getConfig(first.workspace_id);
     if (!this.enabled(config)) return;
 

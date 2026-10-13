@@ -52,6 +52,8 @@ interface Arm {
   refunds: number;
   refundedValue: number;
   platformMismatch: number;
+  crossNet: number;
+  netSamePlatform: number;
   segments: Record<'pago' | 'organico', { visitors: number; buyers: number; net: number; netPerVisitor: number | null }>;
 }
 interface Report {
@@ -59,7 +61,32 @@ interface Report {
   counts: { encaminhamentos: number; fora_da_comparacao: number; falhas: number; forcar_invalido: number };
   arms: Arm[];
   verdict: { status: string; difference: Interval | null; message: string } | null;
+  crossSales?: { external_id: string | null; assigned: Platform; effective: string | null; status: string; gross: number; net: number; sold_at: string }[];
 }
+
+interface TestSale {
+  id: string;
+  external_id: string | null;
+  order: string | null;
+  is_order_bump: boolean;
+  is_test: boolean;
+  status: string;
+  product_name: string | null;
+  assigned_platform: string | null;
+  effective_platform: string | null;
+  amount: number;
+  gross_amount: number | null;
+  fee_amount: number | null;
+  net_amount: number | null;
+  refunded_amount: number | null;
+  sold_at: string;
+  linked_to_visit: boolean;
+  purchase_sent: boolean;
+}
+
+const SALE_STATUS: Record<string, string> = {
+  approved: 'Aprovada', pending: 'Pendente', refunded: 'Reembolsada', chargeback: 'Chargeback',
+};
 
 const LABEL: Record<Platform, string> = { hotmart: 'Hotmart', kiwify: 'Kiwify' };
 const STATUS_LABEL: Record<Status, string> = {
@@ -153,7 +180,15 @@ export default function AbTest() {
     enabled: !!exp?.id,
   });
 
+  const { data: testSales } = useQuery({
+    queryKey: ['ab-test-sales', exp?.id],
+    queryFn: () => api.get<TestSale[]>(`/ab-checkout/${exp!.id}/test-sales`),
+    enabled: !!exp?.id,
+    refetchInterval: 30_000,
+  });
+
   const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['ab-test-sales'] });
     qc.invalidateQueries({ queryKey: ['ab-experiments'] });
     qc.invalidateQueries({ queryKey: ['ab-report'] });
     qc.invalidateQueries({ queryKey: ['ab-events'] });
@@ -334,6 +369,59 @@ export default function AbTest() {
           </Card>
         )}
 
+        {exp && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Validação: pedidos de teste</CardTitle>
+              <CardDescription>
+                Compras feitas pelos links de teste. Chegam marcadas como teste antes do pagamento, não vão ao pixel e não entram no resultado.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!testSales || testSales.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhum pedido de teste ainda.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Pedido</TableHead>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Sorteada → efetiva</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Bruto</TableHead>
+                        <TableHead className="text-right">Taxa</TableHead>
+                        <TableHead className="text-right">Líquido</TableHead>
+                        <TableHead className="text-right">Reembolsado</TableHead>
+                        <TableHead>Marcado teste</TableHead>
+                        <TableHead>Purchase ao Meta</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {testSales.map((s) => (
+                        <TableRow key={s.id}>
+                          <TableCell className="font-mono text-xs">{s.external_id}</TableCell>
+                          <TableCell>{s.is_order_bump ? 'Bump: ' : 'Principal: '}{s.product_name ?? '—'}</TableCell>
+                          <TableCell>
+                            {s.assigned_platform ? LABEL[s.assigned_platform as Platform] ?? s.assigned_platform : '—'} → {s.effective_platform ? LABEL[s.effective_platform as Platform] ?? s.effective_platform : '—'}
+                          </TableCell>
+                          <TableCell>{SALE_STATUS[s.status] ?? s.status}</TableCell>
+                          <TableCell className="text-right tabular-nums">{brl(s.gross_amount ?? s.amount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{brl(s.fee_amount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{brl(s.net_amount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{s.refunded_amount != null ? brl(s.refunded_amount) : '—'}</TableCell>
+                          <TableCell>{s.is_test ? '✅ sim' : '⚠️ não'}</TableCell>
+                          <TableCell>{s.purchase_sent ? '⚠️ enviado' : '✅ não enviado'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {exp && report?.started && (
           <Card>
             <CardHeader>
@@ -374,6 +462,8 @@ export default function AbTest() {
                       ['Líquido', (a: Arm) => brl(a.net)],
                       ['Líquido por visitante', (a: Arm) => `${brl(a.netPerVisitor.value)} [${brl(a.netPerVisitor.low)} a ${brl(a.netPerVisitor.high)}]`],
                       ['Reembolsos', (a: Arm) => `${a.refunds} (${brl(a.refundedValue)})`],
+                      ['Vendas cruzadas (comprou na outra)', (a: Arm) => `${a.platformMismatch} (${brl(a.crossNet)} líquido)`],
+                      ['Líquido só na plataforma sorteada', (a: Arm) => brl(a.netSamePlatform)],
                       ['Pago: visitantes / compradores', (a: Arm) => `${a.segments.pago.visitors} / ${a.segments.pago.buyers}`],
                       ['Pago: líquido por visitante', (a: Arm) => brl(a.segments.pago.netPerVisitor)],
                       ['Orgânico: visitantes / compradores', (a: Arm) => `${a.segments.organico.visitors} / ${a.segments.organico.buyers}`],
@@ -400,8 +490,10 @@ export default function AbTest() {
                   <div className="space-y-1">
                     {report.counts.falhas > 0 && <div>{report.counts.falhas} falha(s) no redirecionamento (a pessoa foi para o checkout mesmo assim, sem trocar de plataforma).</div>}
                     {report.counts.forcar_invalido > 0 && <div>{report.counts.forcar_invalido} tentativa(s) de forçar plataforma sem link válido (ignoradas).</div>}
-                    {report.arms.filter((a) => a.platformMismatch > 0).map((a) => (
-                      <div key={a.platform}>{a.platformMismatch} venda(s) de visitante da {LABEL[a.platform]} feitas na outra plataforma (fora da conta).</div>
+                    {(report.crossSales ?? []).map((c, i) => (
+                      <div key={`c-${i}`}>
+                        Venda cruzada {c.external_id}: sorteada {LABEL[c.assigned]}, comprou na {c.effective ? LABEL[c.effective as Platform] ?? c.effective : '?'} ({brl(c.net)} líquido). Conta para a {LABEL[c.assigned]}.
+                      </div>
                     ))}
                     {report.arms.filter((a) => a.netEstimated > 0).map((a) => (
                       <div key={`e-${a.platform}`}>{LABEL[a.platform]}: {brl(a.netEstimated)} sem líquido informado, contados pelo bruto.</div>

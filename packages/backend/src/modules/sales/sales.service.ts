@@ -5,6 +5,7 @@ import { PlanLimitsService, SaleDecision } from '../plan-limits/plan-limits.serv
 import { StripeOverageService } from '../stripe/stripe-overage.service';
 import { VisitorMatchingService } from '../tracking/visitor-matching.service';
 import { webhookContext } from '../../shared/helpers/webhook-context';
+import { abTagForSale } from '../ab-checkout/ab-sale-tag';
 import { BUYER_GROUPED_PLATFORMS, BUYER_ORDER_WINDOW_MS } from '../../shared/constants/buyer-order';
 
 export interface SalesFilters {
@@ -69,6 +70,23 @@ export class SalesService {
     // decide o pixel do Purchase e onde a venda aparece no painel.
     const area = await this.resolveArea(sale, ctx?.trackingRef ?? null);
     if (area && area !== sale.workspace_id) sale = { ...sale, workspace_id: area };
+
+    // Teste A/B: venda que voltou do redirecionador leva a plataforma
+    // sorteada; a do link de teste já chega marcada como teste (e na área do
+    // experimento, porque não passou pela página). Sem match, nada muda.
+    const ab = await abTagForSale(() => this.supabase.getClient(), [
+      sale.metadata?.sck,
+      sale.metadata?.tracking_ref,
+      ctx?.trackingRef,
+    ]);
+    if (ab) {
+      sale = {
+        ...sale,
+        ab_experiment_id: ab.ab_experiment_id,
+        ab_assigned_platform: ab.ab_assigned_platform,
+        ...(ab.is_test ? { is_test: true, workspace_id: ab.workspace_id } : {}),
+      };
+    }
 
     // 1. Status != approved — persist without limit check.
     if (sale.status !== 'approved') {
@@ -245,7 +263,7 @@ export class SalesService {
       const t = new Date(sale.sold_at).getTime();
       const { data: rows, error } = await client
         .from('sales')
-        .select('id, external_id, sold_at, created_at, order_external_id, is_order_bump')
+        .select('id, external_id, sold_at, created_at, order_external_id, is_order_bump, is_test')
         .eq('workspace_id', sale.workspace_id)
         .eq('customer_email', sale.customer_email)
         .eq('status', 'approved')
@@ -264,13 +282,17 @@ export class SalesService {
       // A venda nova ficou depois da janela da primeira: é um pedido próprio.
       if (!group.some((r) => r.id === saleId)) return;
 
+      // Pedido de teste do A/B: uma linha marcada marca o pedido inteiro (o
+      // bump pode chegar sem o código da visita). Nunca desmarca.
+      const groupIsTest = group.some((r: any) => r.is_test);
       for (const row of group) {
         const orderKey = main.external_id;
         const isBump = row.id !== main.id;
-        if (row.order_external_id === orderKey && row.is_order_bump === isBump) continue;
+        const markTest = groupIsTest && !(row as any).is_test;
+        if (row.order_external_id === orderKey && row.is_order_bump === isBump && !markTest) continue;
         await client
           .from('sales')
-          .update({ order_external_id: orderKey, is_order_bump: isBump })
+          .update({ order_external_id: orderKey, is_order_bump: isBump, ...(markTest ? { is_test: true } : {}) })
           .eq('id', row.id);
       }
     } catch (err: any) {

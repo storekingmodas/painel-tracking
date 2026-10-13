@@ -135,6 +135,11 @@ export class AbCheckoutService {
     try {
       return await this.decide(exp, params, input, secret, cookieName, cookiePlatform);
     } catch (err: any) {
+      // Link de teste que falhou não segue: a compra sairia sem a marca.
+      if (input.query.forcar) {
+        await this.log(exp.id, 'falha_teste', { erro: String(err?.message ?? err).slice(0, 300) });
+        throw err;
+      }
       // Falha no meio do caminho. Nunca troca a variante em silêncio: quem já
       // tem plataforma (cookie assinado) vai para ela; quem não tem vai para a
       // padrão e sai da comparação. Tudo registrado.
@@ -158,8 +163,38 @@ export class AbCheckoutService {
     cookiePlatform: Platform | null,
   ): Promise<RedirectResult> {
     const client = this.supabase.getClient();
-    const sid = sessionFromParams(params);
 
+    // Link de teste: visita própria, isolada de qualquer visitante real. O
+    // código novo vai ao checkout no sck e volta no webhook, então o pedido
+    // já chega marcado como teste — antes do pagamento, sem Purchase.
+    const early = verifyTest(secret, exp.slug, input.query.forcar, input.query.validade, input.query.assinatura, Date.now());
+    if (early.platform) {
+      const target = this.urlFor(exp, early.platform);
+      if (!target) throw new Error(`URL da ${early.platform} nao cadastrada`);
+      const testSid = randomUUID();
+      const testParams = { ...params, sck: `stl_${testSid}` };
+      const now = new Date().toISOString();
+      const { error } = await client.from('ab_assignments').insert({
+        experiment_id: exp.id,
+        visitor_id: `teste:${testSid}`,
+        session_id: testSid,
+        platform: early.platform,
+        eligible: false,
+        segment: 'organico',
+        country: (input.country || '').toUpperCase() || null,
+        is_test: true,
+        source: 'teste',
+        first_seen_at: now,
+        last_redirect_at: now,
+      });
+      // Sem o registro, o pedido não seria reconhecido como teste: melhor
+      // não seguir do que gerar uma compra de teste que vai ao pixel.
+      if (error) throw new Error(`registro do teste falhou: ${error.message}`);
+      await this.log(exp.id, 'teste', { visitor_id: `teste:${testSid}`, session_id: testSid, platform: early.platform });
+      return { location: buildTargetUrl(target, early.platform, testParams) };
+    }
+
+    const sid = sessionFromParams(params);
     const { data: session } = sid
       ? await client
           .from('tracking_sessions')
@@ -388,9 +423,21 @@ export class AbCheckoutService {
       .update({ is_test: isTest })
       .eq('user_id', userId)
       .or(`external_id.eq.${o.replace(/[,()]/g, '')},order_external_id.eq.${o.replace(/[,()]/g, '')}`)
-      .select('id');
+      .select('id, external_id, order_external_id');
     if (error) throw new Error(error.message);
-    return { updated: (data ?? []).length };
+    // Os bumps do mesmo pedido vão junto.
+    const orderKeys = [...new Set((data ?? []).map((s: any) => s.order_external_id || s.external_id).filter(Boolean))];
+    let bumps = 0;
+    if (orderKeys.length) {
+      const { data: more } = await client
+        .from('sales')
+        .update({ is_test: isTest })
+        .eq('user_id', userId)
+        .in('order_external_id', orderKeys)
+        .select('id');
+      bumps = (more ?? []).filter((m: any) => !(data ?? []).some((d: any) => d.id === m.id)).length;
+    }
+    return { updated: (data ?? []).length + bumps };
   }
 
   /**
@@ -426,11 +473,10 @@ export class AbCheckoutService {
       const { data, error } = await client
         .from('sales')
         .select(
-          'id, external_id, order_external_id, is_order_bump, visitor_id, session_id, metadata, status, amount, gross_amount, fee_amount, net_amount, refunded_amount, sold_at, checkout_integrations(platform)',
+          'id, external_id, order_external_id, is_order_bump, is_test, visitor_id, session_id, metadata, status, amount, gross_amount, fee_amount, net_amount, refunded_amount, sold_at, checkout_integrations(platform)',
         )
         .eq('user_id', userId)
         .eq('workspace_id', exp.workspace_id)
-        .eq('is_test', false)
         .gte('sold_at', exp.activated_at)
         .range(from, from + 999);
       if (error) throw new Error(error.message);
@@ -444,6 +490,12 @@ export class AbCheckoutService {
       if (!data || data.length < 1000) break;
     }
 
+    // Pedido com qualquer linha de teste sai inteiro (o bump pode ter chegado
+    // sem a marca).
+    const keyOf = (s: SaleRow) => s.order_external_id || s.external_id || s.id;
+    const testOrders = new Set(sales.filter((s: any) => s.is_test).map(keyOf));
+    const realSales = sales.filter((s) => !testOrders.has(keyOf(s)));
+
     const { data: evs } = await client
       .from('ab_events')
       .select('kind')
@@ -455,7 +507,61 @@ export class AbCheckoutService {
       else counts.falhas++;
     }
 
-    return { experiment: exp, started: true, counts, ...buildReport(eligible, sales) };
+    return { experiment: exp, started: true, counts, ...buildReport(eligible, realSales) };
+  }
+
+  /**
+   * Pedidos de teste do experimento, linha a linha, para a validação:
+   * plataforma sorteada × efetiva, bumps, bruto/taxa/líquido, reembolso e se
+   * algum Purchase saiu (não deve).
+   */
+  async testSales(userId: string, id: string) {
+    await this.owned(userId, id);
+    const client = this.supabase.getClient();
+    const cols =
+      'id, external_id, order_external_id, is_order_bump, is_test, status, product_name, amount, gross_amount, fee_amount, net_amount, refunded_amount, sold_at, ab_assigned_platform, session_id, metadata, workspace_id, checkout_integrations(platform)';
+    const { data: tagged, error } = await client
+      .from('sales')
+      .select(cols)
+      .eq('user_id', userId)
+      .eq('ab_experiment_id', id)
+      .eq('is_test', true)
+      .order('sold_at', { ascending: false })
+      .limit(50);
+    if (error) throw new Error(error.message);
+    const keys = [...new Set((tagged ?? []).map((s: any) => s.order_external_id || s.external_id).filter(Boolean))];
+    const { data: siblings } = keys.length
+      ? await client.from('sales').select(cols).eq('user_id', userId).in('order_external_id', keys)
+      : { data: [] as any[] };
+    const all = new Map<string, any>();
+    for (const s of [...(tagged ?? []), ...(siblings ?? [])]) all.set(s.id, s);
+
+    const ids = [...all.keys()];
+    const { data: capi } = ids.length
+      ? await client.from('capi_events').select('sale_id, event_name, status').in('sale_id', ids).eq('event_name', 'Purchase')
+      : { data: [] as any[] };
+
+    return [...all.values()]
+      .sort((a, b) => String(b.sold_at).localeCompare(String(a.sold_at)))
+      .map((s) => ({
+        id: s.id,
+        external_id: s.external_id,
+        order: s.order_external_id || s.external_id,
+        is_order_bump: !!s.is_order_bump,
+        is_test: !!s.is_test,
+        status: s.status,
+        product_name: s.product_name,
+        assigned_platform: s.ab_assigned_platform,
+        effective_platform: s.checkout_integrations?.platform ?? null,
+        amount: s.amount,
+        gross_amount: s.gross_amount,
+        fee_amount: s.fee_amount,
+        net_amount: s.net_amount,
+        refunded_amount: s.refunded_amount,
+        sold_at: s.sold_at,
+        linked_to_visit: !!(s.session_id || s.metadata?.sck),
+        purchase_sent: (capi ?? []).some((c: any) => c.sale_id === s.id && c.status === 'sent'),
+      }));
   }
 
   async events(userId: string, id: string) {

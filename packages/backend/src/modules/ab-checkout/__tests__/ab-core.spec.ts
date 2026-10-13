@@ -9,6 +9,14 @@ import {
   verifyTest,
 } from '../ab-core';
 import { buildReport, wilson, AssignmentRow, SaleRow } from '../ab-report';
+import { sessionOfRefs } from '../ab-sale-tag';
+
+describe('ab-sale-tag', () => {
+  it('acha o código da visita em qualquer referência da venda', () => {
+    expect(sessionOfRefs([null, 'xx', 'stl_0F8FAD5B-D9CB-469F-A165-70867728950E'])).toBe('0f8fad5b-d9cb-469f-a165-70867728950e');
+    expect(sessionOfRefs([undefined, 'organico'])).toBeNull();
+  });
+});
 
 const SECRET = 'segredo';
 const SID = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -101,12 +109,12 @@ describe('ab-report', () => {
       sale({ visitor_id: 'v1', external_id: 'H1', order_external_id: 'H1', platform: 'hotmart' }),
       sale({ visitor_id: 'v1', external_id: 'H2', order_external_id: 'H1', is_order_bump: true, platform: 'hotmart', gross_amount: 21, net_amount: 18, fee_amount: 3 }),
       sale({ visitor_id: 'v3', external_id: 'K1', platform: 'kiwify', status: 'refunded', refunded_amount: 47.9 }),
-      // venda na plataforma errada: não conta, é sinalizada
+      // venda cruzada: sorteado Kiwify, comprou na Hotmart — conta na Kiwify
       sale({ visitor_id: 'v4', external_id: 'X1', platform: 'hotmart' }),
       // venda anterior ao encaminhamento
       sale({ visitor_id: 'v2', external_id: 'H9', platform: 'hotmart', sold_at: '2026-10-13T10:00:00Z' }),
     ];
-    const { arms, verdict } = buildReport(assignments, sales);
+    const { arms, verdict, crossSales } = buildReport(assignments, sales);
     const [h, k] = arms;
     expect(h.visitors).toBe(2);
     expect(h.buyers).toBe(1);
@@ -114,10 +122,13 @@ describe('ab-report', () => {
     expect(h.ordersWithBump).toBe(1);
     expect(h.net).toBeCloseTo(60.17);
     expect(h.netPerVisitor.value).toBeCloseTo(30.09, 1);
-    expect(k.buyers).toBe(1);
+    expect(k.buyers).toBe(2);
     expect(k.refunds).toBe(1);
-    expect(k.net).toBe(0);
+    expect(k.net).toBeCloseTo(42.17);
+    expect(k.netSamePlatform).toBe(0);
+    expect(k.crossNet).toBeCloseTo(42.17);
     expect(k.platformMismatch).toBe(1);
+    expect(crossSales).toEqual([expect.objectContaining({ external_id: 'X1', assigned: 'kiwify', effective: 'hotmart' })]);
     expect(k.segments.organico.buyers).toBe(1);
     expect(verdict.status).toBe('amostra_insuficiente');
   });

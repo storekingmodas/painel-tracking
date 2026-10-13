@@ -61,8 +61,14 @@ export interface ArmReport {
   netPerVisitor: Interval;
   refunds: number;
   refundedValue: number;
-  /** Venda ligada a um visitante, mas na plataforma que ele NÃO recebeu. */
+  /**
+   * Vendas cruzadas: sorteado para esta plataforma, comprou na outra. CONTAM
+   * aqui (o efeito de ser mandado para cá inclui quem saiu e comprou lá).
+   */
   platformMismatch: number;
+  crossNet: number;
+  /** Líquido só das compras feitas na própria plataforma sorteada. */
+  netSamePlatform: number;
   segments: Record<'pago' | 'organico', { visitors: number; buyers: number; net: number; netPerVisitor: number | null }>;
 }
 
@@ -117,10 +123,20 @@ function moneyOf(s: SaleRow): { gross: number; fee: number; net: number; estimat
   return { gross, fee: 0, net: gross, estimated: true };
 }
 
+export interface CrossSale {
+  external_id: string | null;
+  assigned: Platform;
+  effective: string | null;
+  status: string;
+  gross: number;
+  net: number;
+  sold_at: string;
+}
+
 export function buildReport(
   assignments: AssignmentRow[],
   sales: SaleRow[],
-): { arms: ArmReport[]; verdict: Verdict } {
+): { arms: ArmReport[]; verdict: Verdict; crossSales: CrossSale[] } {
   const byVisitor = new Map<string, AssignmentRow>();
   const bySession = new Map<string, AssignmentRow>();
   for (const a of assignments) {
@@ -145,8 +161,11 @@ export function buildReport(
   const arms = PLATFORMS.map((platform) => {
     const armAssign = assignments.filter((a) => a.platform === platform);
     const armSales = linked.filter((l) => l.a.platform === platform);
-    const mismatch = armSales.filter((l) => l.sale.platform && l.sale.platform !== platform).length;
-    const valid = armSales.filter((l) => !l.sale.platform || l.sale.platform === platform);
+    const isCross = (s: SaleRow) => !!s.platform && s.platform !== platform;
+    const mismatch = armSales.filter((l) => isCross(l.sale)).length;
+    const valid = armSales;
+    let crossNet = 0;
+    let netSamePlatform = 0;
 
     const netByVisitor = new Map<string, number>();
     const buyers = new Set<string>();
@@ -171,6 +190,8 @@ export function buildReport(
         fees += m.fee;
         net += m.net;
         if (m.estimated) netEstimated += m.net;
+        if (isCross(sale)) crossNet += m.net;
+        else netSamePlatform += m.net;
         netByVisitor.set(a.visitor_id, (netByVisitor.get(a.visitor_id) ?? 0) + m.net);
       } else {
         refunds++;
@@ -225,14 +246,31 @@ export function buildReport(
       refunds,
       refundedValue: round(refundedValue),
       platformMismatch: mismatch,
+      crossNet: round(crossNet),
+      netSamePlatform: round(netSamePlatform),
       segments,
       _se: npv.se,
     };
     return report;
   });
 
+  const crossSales: CrossSale[] = linked
+    .filter((l) => l.sale.platform && l.sale.platform !== l.a.platform)
+    .map((l) => {
+      const m = moneyOf(l.sale);
+      return {
+        external_id: l.sale.external_id,
+        assigned: l.a.platform,
+        effective: l.sale.platform,
+        status: l.sale.status,
+        gross: round(m.gross),
+        net: round(m.net),
+        sold_at: l.sale.sold_at,
+      };
+    });
+
   const verdict = verdictOf(arms);
-  return { arms: arms.map(({ _se, ...rest }) => rest), verdict };
+  return { arms: arms.map(({ _se, ...rest }) => rest), verdict, crossSales };
 }
 
 function verdictOf(arms: Array<ArmReport & { _se: number }>): Verdict {
