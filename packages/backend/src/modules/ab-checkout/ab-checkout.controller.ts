@@ -120,6 +120,11 @@ export class AbCheckoutAdminController {
     return this.ab.report(userId, id);
   }
 
+  @Post(':id/note')
+  addNote(@CurrentUser('id') userId: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: any) {
+    return this.ab.addNote(userId, id, body?.text);
+  }
+
   @Get(':id/test-sales')
   testSales(@CurrentUser('id') userId: string, @Param('id', new ParseUUIDPipe()) id: string) {
     return this.ab.testSales(userId, id);

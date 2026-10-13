@@ -564,6 +564,15 @@ export class AbCheckoutService {
       }));
   }
 
+  /** Anotação no registro do experimento (diferenças entre as ofertas etc.). */
+  async addNote(userId: string, id: string, text: string) {
+    await this.owned(userId, id);
+    const texto = String(text ?? '').trim().slice(0, 1000);
+    if (!texto) throw new BadRequestException('Escreva a anotacao');
+    await this.log(id, 'nota', { texto });
+    return { ok: true };
+  }
+
   async events(userId: string, id: string) {
     await this.owned(userId, id);
     const { data } = await this.supabase

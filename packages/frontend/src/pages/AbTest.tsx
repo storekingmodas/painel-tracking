@@ -133,6 +133,7 @@ export default function AbTest() {
   const [busy, setBusy] = useState(false);
   const [base, setBase] = useState(readBase);
   const [testOrder, setTestOrder] = useState('');
+  const [note, setNote] = useState('');
   const [testLinks, setTestLinks] = useState<Partial<Record<Platform, string>>>({});
 
   const { data: experiments, isLoading } = useQuery({
@@ -505,14 +506,30 @@ export default function AbTest() {
           </Card>
         )}
 
-        {exp && events && events.length > 0 && (
+        {exp && (
           <Card>
-            <CardHeader><CardTitle className="text-base">Registro (mudanças e falhas)</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-base">Registro (anotações, mudanças e falhas)</CardTitle>
+              <CardDescription>Anote aqui qualquer diferença entre as ofertas: ela fica junto do resultado.</CardDescription>
+            </CardHeader>
             <CardContent className="space-y-1 text-sm">
-              {events.map((e, i) => (
+              <div className="mb-3 flex gap-2">
+                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ex.: bump da Kiwify sem preço riscado" />
+                <Button
+                  variant="outline"
+                  disabled={busy || !note.trim()}
+                  onClick={() => run(async () => {
+                    await api.post(`/ab-checkout/${exp.id}/note`, { text: note });
+                    setNote('');
+                  }, 'Anotação registrada')}
+                >
+                  Anotar
+                </Button>
+              </div>
+              {(events ?? []).map((e, i) => (
                 <div key={i} className="flex gap-3">
                   <span className="text-muted-foreground tabular-nums">{format(new Date(e.created_at), 'dd/MM HH:mm', { locale: ptBR })}</span>
-                  <span>{e.kind}{e.platform ? ` · ${e.platform}` : ''}{e.detail?.status ? ` · ${e.detail.status}${e.detail.forced ? ` ${e.detail.forced}` : ''}` : ''}{e.detail?.erro ? ` · ${e.detail.erro}` : ''}</span>
+                  <span>{e.kind}{e.platform ? ` · ${e.platform}` : ''}{e.detail?.status ? ` · ${e.detail.status}${e.detail.forced ? ` ${e.detail.forced}` : ''}` : ''}{e.detail?.erro ? ` · ${e.detail.erro}` : ''}{e.kind === 'nota' && e.detail?.texto ? `: ${e.detail.texto}` : ''}</span>
                 </div>
               ))}
             </CardContent>
