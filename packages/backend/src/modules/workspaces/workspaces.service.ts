@@ -37,7 +37,7 @@ export class WorkspacesService {
     const { data, error } = await this.supabase
       .getClient()
       .from('workspaces')
-      .select('id, user_id, name, ad_spend_tax_percentage, created_at, updated_at')
+      .select('id, user_id, name, ad_spend_tax_percentage, campaign_filter, created_at, updated_at')
       .eq('user_id', effectiveUserId)
       .order('created_at', { ascending: true });
 
@@ -103,6 +103,24 @@ export class WorkspacesService {
 
     if (error) throw error;
     return { success: true, ad_spend_tax_percentage: percentage };
+  }
+
+  /** Palavras do nome das campanhas desta área (ver campaignMatcher). */
+  async updateCampaignFilter(userId: string, workspaceId: string, filter: string | null) {
+    await this.verifyOwnership(userId, workspaceId);
+    const value = (filter ?? '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean)
+      .join(', ');
+    const { error } = await this.supabase
+      .getClient()
+      .from('workspaces')
+      .update({ campaign_filter: value || null })
+      .eq('id', workspaceId)
+      .eq('user_id', userId);
+    if (error) throw error;
+    return { success: true, campaign_filter: value || null };
   }
 
   async remove(userId: string, workspaceId: string) {

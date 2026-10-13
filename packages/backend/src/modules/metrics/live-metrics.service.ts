@@ -9,6 +9,7 @@ import {
   getAccountCurrency,
 } from '../../shared/helpers/currency';
 import { toExclusiveEndDate, toStartOfDayUTC } from '../../shared/helpers/date-range';
+import { campaignMatcher } from '../../shared/helpers/campaign-filter';
 import { META_API_VERSION } from '../../shared/constants/meta-api';
 
 const FB_API_VERSION = META_API_VERSION;
@@ -94,7 +95,8 @@ export class LiveMetricsService {
     const t0 = Date.now();
     this.logger.log(`[getCampaigns] START | range=${filters.from}..${filters.to}`);
 
-    let connections = await this.getActiveConnections(userId, filters.workspace_id);
+    const scope = await this.areaScope(userId, filters.workspace_id);
+    let connections = scope.connections;
     if (filters.connection_ids?.length) {
       connections = connections.filter((c) => filters.connection_ids!.includes(c.id));
     }
@@ -108,7 +110,8 @@ export class LiveMetricsService {
 
     // Step 1: Fetch only campaigns first — if none have data, skip ads entirely
     const t1 = Date.now();
-    const fbCampaigns = await this.fetchAllConnectionsCampaigns(connections, since, until);
+    const fbCampaigns = (await this.fetchAllConnectionsCampaigns(connections, since, until))
+      .filter((c) => !scope.allowed || scope.allowed.has(String(c.facebook_campaign_id)));
     this.logger.log(`[getCampaigns] Step 1 (campaigns only) done in ${Date.now() - t1}ms | ${fbCampaigns.length} campaign(s) with activity`);
 
     if (fbCampaigns.length === 0) {
@@ -198,7 +201,8 @@ export class LiveMetricsService {
   // Public API: Ad Sets
   // ============================================
   async getAdSets(userId: string, filters: AdSetFilters) {
-    let connections = await this.getActiveConnections(userId, filters.workspace_id);
+    const scope = await this.areaScope(userId, filters.workspace_id);
+    let connections = scope.connections;
     if (filters.connection_ids?.length) {
       connections = connections.filter((c) => filters.connection_ids!.includes(c.id));
     }
@@ -207,9 +211,13 @@ export class LiveMetricsService {
     const { since, until } = this.resolveRange(filters);
 
     // Fetch ad sets: use /{campaign_id}/adsets when campaign_ids provided, otherwise /{ad_account_id}/adsets
-    const fbAdSets = filters.campaign_ids?.length
+    let fbAdSets = filters.campaign_ids?.length
       ? await this.fetchAdSetsByCampaignIds(connections, filters.campaign_ids, since, until)
       : await this.fetchAllConnectionsAdSets(connections, since, until);
+    if (scope.allowed) {
+      const allowed = scope.allowed;
+      fbAdSets = fbAdSets.filter((as) => allowed.has(String(as.facebookCampaignId)));
+    }
 
     if (fbAdSets.length === 0) return [];
 
@@ -287,7 +295,8 @@ export class LiveMetricsService {
   // Public API: Ads
   // ============================================
   async getAds(userId: string, filters: AdFilters) {
-    let connections = await this.getActiveConnections(userId, filters.workspace_id);
+    const scope = await this.areaScope(userId, filters.workspace_id);
+    let connections = scope.connections;
     if (filters.connection_ids?.length) {
       connections = connections.filter((c) => filters.connection_ids!.includes(c.id));
     }
@@ -304,6 +313,10 @@ export class LiveMetricsService {
       fbAds = await this.fetchAdsByParentIds(connections, filters.campaign_ids, 'campaign', since, until);
     } else {
       fbAds = await this.fetchAllConnectionsAds(connections, since, until);
+    }
+    if (scope.allowed) {
+      const allowed = scope.allowed;
+      fbAds = fbAds.filter((ad) => allowed.has(String(ad.facebookCampaignId)));
     }
     if (fbAds.length === 0) return [];
 
@@ -505,7 +518,8 @@ export class LiveMetricsService {
     userId: string,
     filters: DashboardFilters,
   ): Promise<{ total: number; byDate: Map<string, number> }> {
-    let connections = await this.getActiveConnections(userId, filters.workspace_id);
+    const scope = await this.areaScope(userId, filters.workspace_id);
+    let connections = scope.connections;
     if (filters.connection_ids?.length) {
       connections = connections.filter((c) => filters.connection_ids!.includes(c.id));
     }
@@ -513,7 +527,8 @@ export class LiveMetricsService {
       return { total: 0, byDate: new Map() };
     }
     const { since, until } = this.resolveRange(filters);
-    const dailySpend = await this.fetchAllConnectionsDailyInsights(connections, since, until);
+    const dailySpend = (await this.fetchAllConnectionsDailyInsights(connections, since, until))
+      .filter((d: any) => !scope.allowed || scope.allowed.has(String(d.campaign_id)));
     const byDate = new Map<string, number>();
     let total = 0;
     for (const d of dailySpend as any[]) {
@@ -528,7 +543,8 @@ export class LiveMetricsService {
   // Public API: Daily spend (for funnel charts)
   // ============================================
   async getDailyAdSpend(userId: string, filters: DateRangeFilters) {
-    let connections = await this.getActiveConnections(userId, filters.workspace_id);
+    const scope = await this.areaScope(userId, filters.workspace_id);
+    let connections = scope.connections;
     if (filters.connection_ids?.length) {
       connections = connections.filter((c) => filters.connection_ids!.includes(c.id));
     }
@@ -537,7 +553,8 @@ export class LiveMetricsService {
     }
 
     const { since, until } = this.resolveRange(filters);
-    const result = await this.fetchAllConnectionsDailyInsights(connections, since, until);
+    const result = (await this.fetchAllConnectionsDailyInsights(connections, since, until))
+      .filter((d: any) => !scope.allowed || scope.allowed.has(String(d.campaign_id)));
 
     return result;
   }
@@ -749,6 +766,67 @@ export class LiveMetricsService {
   // ============================================
   // Private: Get active Facebook connections
   // ============================================
+  /**
+   * Contas e campanhas que a área enxerga.
+   *
+   * A campanha pertence à área do PIXEL em que ela otimiza — o mesmo vínculo
+   * que o Meta usa (promoted_object.pixel_id dos conjuntos). Duas áreas na
+   * mesma conta de anúncios se separam sozinhas: a campanha de nutrição, que
+   * otimiza no pixel de nutrição, só soma na área Nutrição. Campanha nova
+   * entra na área certa sem configurar nada.
+   *
+   * A área com pixel usa as contas de anúncio ativas de qualquer área da
+   * usuária (a conexão mora numa área só, a mais antiga). campaign_filter
+   * (palavras do nome) continua valendo como exceção, se um dia for preciso.
+   * Área sem pixel e sem filtro: só as contas dela e todas as campanhas.
+   *
+   * allowed = null quer dizer "todas as campanhas".
+   */
+  private async areaScope(
+    userId: string,
+    workspaceId?: string,
+  ): Promise<{ connections: ActiveConnection[]; allowed: Set<string> | null }> {
+    if (!workspaceId) return { connections: await this.getActiveConnections(userId), allowed: null };
+
+    const { data: area } = await this.supabase
+      .getClient()
+      .from('workspaces')
+      .select('meta_pixel_id, campaign_filter')
+      .eq('id', workspaceId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    const pixelId = (area as any)?.meta_pixel_id ? String((area as any).meta_pixel_id) : null;
+    const byName = campaignMatcher((area as any)?.campaign_filter);
+    if (!pixelId && !byName) {
+      return { connections: await this.getActiveConnections(userId, workspaceId), allowed: null };
+    }
+
+    const connections = await this.getActiveConnections(userId);
+    const allowed = new Set<string>();
+    await Promise.all(
+      connections.map(async (conn) => {
+        try {
+          if (byName) {
+            const url = `${FB_GRAPH_URL}/${conn.ad_account_id}/campaigns?fields=id,name&limit=500&access_token=${conn.access_token}`;
+            const rows = await this.fetchAllPages(url, 'campaigns:area', conn.ad_account_id);
+            for (const c of rows) if (byName(c.name)) allowed.add(String(c.id));
+          } else {
+            const url = `${FB_GRAPH_URL}/${conn.ad_account_id}/adsets?fields=campaign_id,promoted_object&limit=500&access_token=${conn.access_token}`;
+            const rows = await this.fetchAllPages(url, 'adsets:pixel', conn.ad_account_id);
+            for (const a of rows) {
+              if (a.promoted_object?.pixel_id && String(a.promoted_object.pixel_id) === pixelId) {
+                allowed.add(String(a.campaign_id));
+              }
+            }
+          }
+        } catch (err: any) {
+          this.logger.warn(`[areaScope] ${conn.ad_account_id}: ${err?.message}`);
+        }
+      }),
+    );
+    return { connections, allowed };
+  }
+
   private async getActiveConnections(userId: string, workspaceId?: string): Promise<ActiveConnection[]> {
     const client = this.supabase.getClient();
     let query = client
@@ -1113,6 +1191,8 @@ export class LiveMetricsService {
       return {
         campaign_id: row.campaign_id,
         facebook_campaign_id: row.campaign_id,
+        // O filtro de campanhas da área (campaign_filter) procura aqui.
+        campaign_name: row.campaign_name ?? null,
         date: row.date_start,
         spend,
         impressions,

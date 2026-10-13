@@ -10,6 +10,8 @@ export interface Workspace {
   user_id: string;
   name: string;
   ad_spend_tax_percentage: number;
+  /** Palavras do nome das campanhas desta área (separadas por vírgula). */
+  campaign_filter?: string | null;
   created_at: string;
   updated_at: string;
 }

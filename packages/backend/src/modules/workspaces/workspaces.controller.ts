@@ -15,6 +15,15 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WorkspacesService } from './workspaces.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateAdSpendTaxDto } from './dto/update-ad-spend-tax.dto';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
+
+class UpdateCampaignFilterDto {
+  /** Palavras separadas por vírgula; vazio limpa o filtro. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  campaign_filter?: string | null;
+}
 
 @Controller('workspaces')
 @UseGuards(AuthGuard)
@@ -54,6 +63,15 @@ export class WorkspacesController {
     @Body() dto: UpdateAdSpendTaxDto,
   ) {
     return this.workspacesService.updateAdSpendTax(userId, id, dto.percentage);
+  }
+
+  @Patch(':id/campaign-filter')
+  updateCampaignFilter(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateCampaignFilterDto,
+  ) {
+    return this.workspacesService.updateCampaignFilter(userId, id, dto.campaign_filter ?? null);
   }
 
   @Delete(':id')
