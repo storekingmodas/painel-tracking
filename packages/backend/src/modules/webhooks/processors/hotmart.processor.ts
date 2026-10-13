@@ -10,6 +10,7 @@ import { SalesService } from '../../sales/sales.service';
 import { parseXcod, extractAdIdFromValue } from './hotmart-tracking.util';
 
 const APPROVED_EVENTS = new Set(['PURCHASE_APPROVED', 'PURCHASE_COMPLETE']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REFUNDED_EVENTS = new Set([
   'PURCHASE_REFUNDED',
   'PURCHASE_CANCELED',
@@ -33,6 +34,7 @@ export class HotmartProcessor {
     body: any,
     authToken: string | null,
     headers?: Record<string, string | string[] | undefined>,
+    query?: Record<string, string>,
   ): Promise<{ status: number; body: any }> {
     const payload = body;
 
@@ -89,13 +91,27 @@ export class HotmartProcessor {
 
     const supabaseAdmin = this.supabase.getClient();
 
-    // Find integration by token
-    const { data: integration, error: integrationError } = await supabaseAdmin
+    // A Hotmart usa o MESMO hottok para todos os produtos da conta. Com duas
+    // áreas (dois pixels) ligadas à mesma conta, o token sozinho não diz de
+    // qual área é a venda — e a primeira integração achada levava tudo, com
+    // o Purchase indo para o pixel errado. Cada área tem então o seu próprio
+    // endereço (?area=<id da área>); o hottok continua sendo a autenticação.
+    // Sem o parâmetro vale o comportamento antigo (webhooks já cadastrados).
+    const area = typeof query?.area === 'string' && UUID_RE.test(query.area) ? query.area : null;
+    if (query?.area && !area) {
+      return { status: 400, body: { error: 'Parametro area invalido' } };
+    }
+
+    // Find integration by token (and area, when the URL names one)
+    let integrationQuery = supabaseAdmin
       .from('checkout_integrations')
       .select('id, user_id, workspace_id, is_active, use_commission_value')
       .eq('platform', 'hotmart')
       .eq('is_active', true)
-      .eq('webhook_secret', authToken)
+      .eq('webhook_secret', authToken);
+    if (area) integrationQuery = integrationQuery.eq('workspace_id', area);
+    const { data: integration, error: integrationError } = await integrationQuery
+      .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
 

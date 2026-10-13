@@ -28,3 +28,15 @@ export function absoluteApiUrl(): string {
   if (typeof window === 'undefined') return API_URL;
   return `${window.location.origin}${API_URL.startsWith('/') ? '' : '/'}${API_URL}`;
 }
+
+/**
+ * URL de webhook para colar no checkout.
+ *
+ * Hotmart leva ?area=<id da área>: o hottok é um só por conta Hotmart, então
+ * com duas áreas (dois pixels) na mesma conta é o endereço que diz de qual
+ * área é a venda. As outras plataformas se identificam pelo próprio token.
+ */
+export function webhookUrlFor(platform: string, workspaceId: string | null | undefined): string {
+  const base = `${absoluteApiUrl()}/webhooks/${platform}`;
+  return platform === 'hotmart' && workspaceId ? `${base}?area=${workspaceId}` : base;
+}

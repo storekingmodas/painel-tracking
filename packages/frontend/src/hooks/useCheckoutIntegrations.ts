@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { absoluteApiUrl } from '@/lib/apiUrl';
+import { webhookUrlFor } from '@/lib/apiUrl';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useToast } from '@/hooks/use-toast';
@@ -32,7 +32,7 @@ export function useCheckoutIntegrations() {
   // A mesma URL que a tela mostra para colar no checkout (CheckoutConfigModal).
   // Antes era um domínio fixo de outra instalação, gravado em toda integração.
   const generateWebhookUrl = (platform: CheckoutPlatform): string => {
-    return `${absoluteApiUrl()}/webhooks/${platform}`;
+    return webhookUrlFor(platform, activeWorkspaceId);
   };
 
   const fetchIntegrations = useCallback(async () => {

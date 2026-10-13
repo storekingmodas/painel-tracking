@@ -175,7 +175,9 @@ export class WebhookQueueService {
     }
 
     if (platform === 'hotmart') {
-      return processor.process(body, authToken, headers ?? undefined);
+      // queryParams leva o ?area= que separa as áreas que dividem a mesma
+      // conta Hotmart (o hottok é um só por conta).
+      return processor.process(body, authToken, headers ?? undefined, queryParams ?? {});
     }
     if (platform === 'kiwify') {
       return processor.process(

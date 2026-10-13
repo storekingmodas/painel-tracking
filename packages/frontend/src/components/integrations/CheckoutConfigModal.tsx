@@ -23,7 +23,8 @@ import { Switch } from '@/components/ui/switch';
 import { Copy, Check, Info, Wand2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { CheckoutPlatform, CHECKOUT_PLATFORMS, CheckoutIntegration } from '@/types/checkout';
-import { absoluteApiUrl } from '@/lib/apiUrl';
+import { webhookUrlFor } from '@/lib/apiUrl';
+import { useWorkspaceContext } from '@/contexts/WorkspaceContext';
 
 interface CheckoutConfigModalProps {
   open: boolean;
@@ -61,7 +62,8 @@ export function CheckoutConfigModal({
   const { toast } = useToast();
   const config = CHECKOUT_PLATFORMS[platform];
 
-  const displayUrl = `${absoluteApiUrl()}/webhooks/${platform}`;
+  const { activeWorkspaceId } = useWorkspaceContext();
+  const displayUrl = webhookUrlFor(platform, activeWorkspaceId);
 
   useEffect(() => {
     if (open) {
