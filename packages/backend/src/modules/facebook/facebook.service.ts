@@ -351,11 +351,13 @@ export class FacebookService {
   ): Promise<{ savedCount: number }> {
     const client = this.supabase.getClient();
 
-    // Fetch the user's workspace (required for facebook_connections)
+    // A área da conexão: a mais antiga. Com várias áreas, limit(1) sem ordem
+    // devolvia qualquer uma e as contas de anúncio caíam numa área aleatória.
     const { data: workspace, error: wsError } = await client
       .from('workspaces')
       .select('id')
       .eq('user_id', userId)
+      .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
 

@@ -7,7 +7,7 @@
 -- Cole no SQL Editor de um projeto Supabase NOVO E VAZIO e execute uma vez.
 -- Se o banco ja tiver algo, rode supabase/reset.sql antes.
 --
--- 3 migration(s), gerado em 2026-10-13.
+-- 4 migration(s), gerado em 2026-10-13.
 -- ============================================================
 
 -- ==================== 20261002120000_base.sql ====================
@@ -7960,4 +7960,24 @@ SELECT
   (SELECT count(*) FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'checkout_integrations' AND column_name = 'all_products') AS coluna_all_products,
   (SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tablename = 'product_areas' AND rowsecurity) AS tabela_product_areas;
+
+
+-- ==================== 20261013140000_varias_areas.sql ====================
+
+-- ============================================================
+-- Várias áreas por usuário
+-- ============================================================
+-- A base (20261002120000) travou o painel em uma área só: tirou o seletor da
+-- tela e criou idx_workspaces_one_per_user. O resto do sistema continua por
+-- área (vendas, sessões, pixel, token da CAPI, webhooks), e esta instalação
+-- precisa de uma área por pixel — um nicho ou uma família de nichos cada.
+--
+-- O seletor volta ao menu (Sidebar) e a trava sai. A área criada no cadastro
+-- (handle_new_user) continua sendo a primeira.
+DROP INDEX IF EXISTS public.idx_workspaces_one_per_user;
+
+-- Conferência: 0 = a trava saiu
+SELECT count(*) AS trava_uma_area_por_usuario
+FROM pg_indexes
+WHERE schemaname = 'public' AND indexname = 'idx_workspaces_one_per_user';
 
