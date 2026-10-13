@@ -14,9 +14,12 @@ export class IntegrationsService {
   // Checkout integrations
   async listCheckoutIntegrations(userId: string, workspaceId?: string) {
     const db = this.supabase.getClient();
-    let query = db.from('checkout_integrations').select('id, platform, name, webhook_secret, is_active, last_webhook_at, use_commission_value').eq('user_id', userId);
+    let query = db.from('checkout_integrations').select('id, platform, name, webhook_secret, is_active, last_webhook_at, use_commission_value, all_products').eq('user_id', userId);
     if (workspaceId) {
-      query = query.eq('workspace_id', workspaceId);
+      // Vai dentro de um filtro .or() do PostgREST: só um UUID passa.
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workspaceId)) return [];
+      // A integração da conta inteira atende todas as áreas: aparece em cada uma.
+      query = query.or(`workspace_id.eq.${workspaceId},all_products.eq.true`);
     }
     const { data, error } = await query.order('created_at');
     if (error) throw error;

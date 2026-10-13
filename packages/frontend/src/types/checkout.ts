@@ -9,6 +9,8 @@ export interface CheckoutIntegration {
   is_active: boolean;
   use_commission_value: boolean;
   last_webhook_at: string | null;
+  /** Webhook da conta inteira: aparece em todas as áreas. */
+  all_products?: boolean;
 }
 
 export interface CheckoutPlatformConfig {

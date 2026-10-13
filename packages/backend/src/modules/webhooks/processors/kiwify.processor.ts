@@ -369,6 +369,9 @@ export class KiwifyProcessor {
         // Leva o stl_<sessao> que o snippet de rastreio escreve no link do
         // checkout: é o que liga a venda à visita.
         sck: tracking.sck || null,
+        // Chave do produto na tela Produtos (product_areas): sem visita, é
+        // por ele que a venda do webhook da conta inteira acha a área.
+        product_id: product.product_id || product.id || kiwifyBody.product_id || null,
       },
     };
 

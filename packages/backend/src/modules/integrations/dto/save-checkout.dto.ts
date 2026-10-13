@@ -31,4 +31,9 @@ export class SaveCheckoutDto {
   @IsOptional()
   @IsBoolean()
   use_commission_value?: boolean;
+
+  /** Webhook com todos os produtos da conta; a venda vai para a área certa. */
+  @IsOptional()
+  @IsBoolean()
+  all_products?: boolean;
 }

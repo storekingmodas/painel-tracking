@@ -23,6 +23,20 @@ export interface SalesFilters {
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 
+/** Área sem pixel onde ficam as vendas que o painel não soube atribuir. */
+export const UNASSIGNED_AREA_NAME = 'Sem área';
+
+/**
+ * Chaves do produto da venda para product_areas: o id da plataforma (mais
+ * estável) e o nome (o que a usuária reconhece, e o que sobra quando a
+ * plataforma não manda id).
+ */
+export function productKeys(sale: { metadata?: any; product_name?: string | null }): string[] {
+  const id = sale.metadata?.product_id;
+  return [id != null && id !== '' ? `id:${id}` : null, sale.product_name ? `nome:${sale.product_name}` : null]
+    .filter((k): k is string => !!k);
+}
+
 @Injectable()
 export class SalesService {
   private readonly logger = new Logger(SalesService.name);
@@ -50,6 +64,11 @@ export class SalesService {
     if (ctx?.trackingRef && !sale.metadata?.tracking_ref) {
       sale = { ...sale, metadata: { ...(sale.metadata ?? {}), tracking_ref: ctx.trackingRef } };
     }
+
+    // A área de verdade da venda (ver resolveArea). Antes de gravar: é ela que
+    // decide o pixel do Purchase e onde a venda aparece no painel.
+    const area = await this.resolveArea(sale, ctx?.trackingRef ?? null);
+    if (area && area !== sale.workspace_id) sale = { ...sale, workspace_id: area };
 
     // 1. Status != approved — persist without limit check.
     if (sale.status !== 'approved') {
@@ -99,6 +118,97 @@ export class SalesService {
   }
 
   /**
+   * Área da venda, quando ela não é simplesmente a da integração.
+   *
+   * 1. A visita: o código stl_<sessão> que o rastreio pôs no link do checkout
+   *    volta no webhook, e a sessão pertence à área da página onde a pessoa
+   *    clicou. Cobre quase toda venda que vem de anúncio.
+   * 2. product_areas: o produto ligado a uma área na tela Produtos — para a
+   *    venda que chega sem visita (link direto do checkout, bio, WhatsApp).
+   * 3. Integração da conta inteira (all_products) sem 1 nem 2: a área "Sem
+   *    área", que não tem pixel. Mandar para a área da integração seria
+   *    chutar o pixel.
+   *
+   * null = fica a área da integração (o comportamento de sempre). Nunca
+   * lança: tabela ou coluna ainda inexistente cai no comportamento antigo.
+   */
+  async resolveArea(sale: Record<string, any>, trackingRef: string | null): Promise<string | null> {
+    try {
+      const client = this.supabase.getClient();
+      const userId = sale.user_id;
+      if (!userId) return null;
+
+      const text = [
+        trackingRef,
+        JSON.stringify(sale.metadata ?? {}),
+        sale.utm_source, sale.utm_medium, sale.utm_campaign, sale.utm_content, sale.utm_term, sale.ad_id,
+      ].filter(Boolean).join(' ');
+      const sid = text.match(/stl_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i)?.[1];
+      if (sid) {
+        const { data: sessions } = await client
+          .from('tracking_sessions')
+          .select('workspace_id')
+          .eq('session_id', sid)
+          .limit(5);
+        const ids = [...new Set((sessions ?? []).map((s: any) => s.workspace_id))];
+        if (ids.length > 0) {
+          const { data: owned } = await client.from('workspaces').select('id').eq('user_id', userId).in('id', ids);
+          if (owned?.length) return owned[0].id;
+        }
+      }
+
+      if (!sale.checkout_integration_id) return null;
+      const { data: integration, error: intError } = await client
+        .from('checkout_integrations')
+        .select('platform, all_products')
+        .eq('id', sale.checkout_integration_id)
+        .maybeSingle();
+      if (intError || !integration) return null;
+
+      const keys = productKeys(sale);
+      if (keys.length > 0) {
+        const { data: maps } = await client
+          .from('product_areas')
+          .select('workspace_id, product_key')
+          .eq('user_id', userId)
+          .eq('platform', integration.platform)
+          .in('product_key', keys);
+        const hit = keys.map((k) => (maps ?? []).find((m: any) => m.product_key === k)).find(Boolean);
+        if (hit) return hit.workspace_id;
+      }
+
+      if (integration.all_products) return await this.unassignedArea(userId);
+      return null;
+    } catch (err: any) {
+      this.logger.warn(`resolveArea: ${err?.message}`);
+      return null;
+    }
+  }
+
+  /** A área "Sem área" da usuária (sem pixel), criada na primeira vez. */
+  async unassignedArea(userId: string): Promise<string | null> {
+    const client = this.supabase.getClient();
+    const { data: found } = await client
+      .from('workspaces')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('name', UNASSIGNED_AREA_NAME)
+      .limit(1)
+      .maybeSingle();
+    if (found) return found.id;
+    const { data: created, error } = await client
+      .from('workspaces')
+      .insert({ user_id: userId, name: UNASSIGNED_AREA_NAME })
+      .select('id')
+      .single();
+    if (error) {
+      this.logger.warn(`Criar area "${UNASSIGNED_AREA_NAME}": ${error.message}`);
+      return null;
+    }
+    return created.id;
+  }
+
+  /**
    * Junta num pedido só as compras aprovadas da mesma pessoa (e-mail) na
    * mesma área, feitas dentro de BUYER_ORDER_WINDOW_MS da primeira.
    *
@@ -117,15 +227,17 @@ export class SalesService {
       const client = this.supabase.getClient();
       const { data: sale } = await client
         .from('sales')
-        .select('id, workspace_id, customer_email, sold_at, status')
+        .select('id, user_id, workspace_id, customer_email, sold_at, status')
         .eq('id', saleId)
         .maybeSingle();
       if (!sale?.workspace_id || !sale.customer_email || !sale.sold_at || sale.status !== 'approved') return;
 
+      // Integrações da usuária, não da área: com o webhook da conta inteira
+      // (all_products) a integração mora numa área e a venda vai para outra.
       const { data: integrations } = await client
         .from('checkout_integrations')
         .select('id')
-        .eq('workspace_id', sale.workspace_id)
+        .eq('user_id', sale.user_id)
         .in('platform', [...BUYER_GROUPED_PLATFORMS]);
       const integrationIds = (integrations ?? []).map((i) => i.id);
       if (integrationIds.length === 0) return;

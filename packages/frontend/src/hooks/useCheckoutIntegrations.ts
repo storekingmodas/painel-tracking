@@ -14,6 +14,7 @@ export interface SaveIntegrationParams {
   name: string;
   token: string;
   useCommissionValue: boolean;
+  allProducts?: boolean;
 }
 
 export function useCheckoutIntegrations() {
@@ -93,7 +94,9 @@ export function useCheckoutIntegrations() {
     setSaving(true);
 
     try {
-      const webhookUrl = generateWebhookUrl(params.platform);
+      const webhookUrl = params.allProducts
+        ? webhookUrlFor(params.platform, null)
+        : generateWebhookUrl(params.platform);
 
       await api.post('/integrations/checkout', {
         ...(params.id ? { id: params.id } : {}),
@@ -103,6 +106,7 @@ export function useCheckoutIntegrations() {
         webhook_secret: params.token.trim(),
         workspace_id: activeWorkspaceId || undefined,
         use_commission_value: params.useCommissionValue,
+        all_products: !!params.allProducts,
       });
 
       queryClient.invalidateQueries({ queryKey: ['workspaces'] });

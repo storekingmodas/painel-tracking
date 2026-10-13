@@ -23,6 +23,7 @@ import { UsersModule } from './modules/users/users.module';
 import { AccountModule } from './modules/account/account.module';
 import { TrackingModule } from './modules/tracking/tracking.module';
 import { MetaCapiModule } from './modules/meta-capi/meta-capi.module';
+import { ProductAreasModule } from './modules/product-areas/product-areas.module';
 
 const RATE_LIMIT_TTL_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 60;
@@ -54,6 +55,7 @@ const RATE_LIMIT_MAX_REQUESTS = 60;
     AccountModule,
     TrackingModule,
     MetaCapiModule,
+    ProductAreasModule,
   ],
   providers: [
     {

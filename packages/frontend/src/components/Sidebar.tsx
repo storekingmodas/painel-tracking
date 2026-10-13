@@ -16,6 +16,7 @@ import {
   LogOut,
   Zap,
   Users,
+  Package,
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -26,6 +27,7 @@ const navItems = [
   { to: '/sales', icon: ShoppingCart, label: 'Vendas' },
   { to: '/tracking', icon: Users, label: 'Eventos' },
   { to: '/integrations', icon: Link2, label: 'Integrações' },
+  { to: '/products', icon: Package, label: 'Produtos' },
   { to: '/financial', icon: DollarSign, label: 'Financeiro' },
   { to: '/rules', icon: Zap, label: 'Regras' },
   { to: '/settings', icon: Settings, label: 'Configurações' },

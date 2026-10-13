@@ -32,7 +32,7 @@ interface CheckoutConfigModalProps {
   platform: CheckoutPlatform;
   integration: CheckoutIntegration | undefined;
   webhookUrl: string;
-  onSave: (params: { name: string; token: string; useCommissionValue: boolean }) => Promise<boolean>;
+  onSave: (params: { name: string; token: string; useCommissionValue: boolean; allProducts: boolean }) => Promise<boolean>;
   onToggle: (active: boolean) => Promise<void>;
   onDelete: () => Promise<void>;
   saving: boolean;
@@ -62,17 +62,21 @@ export function CheckoutConfigModal({
   const { toast } = useToast();
   const config = CHECKOUT_PLATFORMS[platform];
 
+  const [allProducts, setAllProducts] = useState(false);
   const { activeWorkspaceId } = useWorkspaceContext();
-  const displayUrl = webhookUrlFor(platform, activeWorkspaceId);
+  // Webhook da conta inteira: a área sai da visita ou da tela Produtos, então
+  // a URL não leva a área (?area=, que só a Hotmart usa).
+  const displayUrl = webhookUrlFor(platform, allProducts ? null : activeWorkspaceId);
 
   useEffect(() => {
     if (open) {
       setToken(integration?.webhook_secret || '');
       setName(integration?.name || '');
       setUseCommissionValue(integration?.use_commission_value ?? false);
+      setAllProducts(integration?.all_products ?? false);
       setAttempted(false);
     }
-  }, [open, integration?.webhook_secret, integration?.use_commission_value, integration?.name]);
+  }, [open, integration?.webhook_secret, integration?.use_commission_value, integration?.name, integration?.all_products]);
 
   const handleCopyUrl = () => {
     navigator.clipboard.writeText(displayUrl);
@@ -100,7 +104,7 @@ export function CheckoutConfigModal({
   const handleSave = async () => {
     setAttempted(true);
     if (!name.trim() || !token.trim()) return;
-    const success = await onSave({ name, token, useCommissionValue });
+    const success = await onSave({ name, token, useCommissionValue, allProducts });
     if (success) {
       onOpenChange(false);
     }
@@ -152,6 +156,18 @@ export function CheckoutConfigModal({
                 <p className="text-xs font-medium text-destructive">Preencha o nome da integração</p>
               </div>
             )}
+          </div>
+
+          {/* Conta inteira */}
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-foreground/10 p-4">
+            <div>
+              <p className="font-medium">Todos os produtos da conta</p>
+              <p className="text-sm text-muted-foreground">
+                Um webhook só para todas as áreas. Cada venda vai para a área da página onde a pessoa clicou; sem visita,
+                para a área do produto na tela Produtos. Na {config.name}, marque todos os produtos.
+              </p>
+            </div>
+            <Switch checked={allProducts} onCheckedChange={setAllProducts} />
           </div>
 
           {/* Webhook URL */}

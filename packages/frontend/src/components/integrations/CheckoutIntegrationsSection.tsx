@@ -87,7 +87,7 @@ export function CheckoutIntegrationsSection() {
   const configPlatform = selectedIntegration?.platform || selectedPlatformForNew;
   const configIntegration = selectedIntegration || undefined;
 
-  const handleSave = async (params: { name: string; token: string; useCommissionValue: boolean }) => {
+  const handleSave = async (params: { name: string; token: string; useCommissionValue: boolean; allProducts: boolean }) => {
     if (!configPlatform) return false;
     return await saveIntegration({
       id: selectedIntegration?.id,
@@ -95,6 +95,7 @@ export function CheckoutIntegrationsSection() {
       name: params.name,
       token: params.token,
       useCommissionValue: params.useCommissionValue,
+      allProducts: params.allProducts,
     });
   };
 
@@ -171,6 +172,7 @@ export function CheckoutIntegrationsSection() {
               <p className="truncate text-sm font-medium text-foreground">{integration.name}</p>
               <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                 <span>{config.name}</span>
+                {integration.all_products && <span className="text-accent-readable">Todas as áreas</span>}
                 {integration.last_webhook_at && (
                   <span className="inline-flex items-center gap-1">
                     <Clock className="h-3 w-3" />
