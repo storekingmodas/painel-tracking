@@ -1,6 +1,9 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 
-const STL = /stl_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+/** Área sem pixel onde moram as compras de teste (fora das telas da área real). */
+export const TEST_AREA_NAME = 'Testes';
+
+const STL =/stl_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
 export interface AbSaleTag {
   ab_experiment_id: string;

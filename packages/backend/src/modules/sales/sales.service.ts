@@ -5,7 +5,7 @@ import { PlanLimitsService, SaleDecision } from '../plan-limits/plan-limits.serv
 import { StripeOverageService } from '../stripe/stripe-overage.service';
 import { VisitorMatchingService } from '../tracking/visitor-matching.service';
 import { webhookContext } from '../../shared/helpers/webhook-context';
-import { abTagForSale } from '../ab-checkout/ab-sale-tag';
+import { abTagForSale, TEST_AREA_NAME } from '../ab-checkout/ab-sale-tag';
 import { BUYER_GROUPED_PLATFORMS, BUYER_ORDER_WINDOW_MS } from '../../shared/constants/buyer-order';
 
 export interface SalesFilters {
@@ -72,19 +72,21 @@ export class SalesService {
     if (area && area !== sale.workspace_id) sale = { ...sale, workspace_id: area };
 
     // Teste A/B: venda que voltou do redirecionador leva a plataforma
-    // sorteada; a do link de teste já chega marcada como teste (e na área do
-    // experimento, porque não passou pela página). Sem match, nada muda.
+    // sorteada; a do link de teste já chega marcada como teste e vai para a
+    // área "Testes" (sem pixel, fora das telas da área real). Sem match, nada
+    // muda.
     const ab = await abTagForSale(() => this.supabase.getClient(), [
       sale.metadata?.sck,
       sale.metadata?.tracking_ref,
       ctx?.trackingRef,
     ]);
     if (ab) {
+      const testWs = ab.is_test && sale.user_id ? await this.testArea(sale.user_id).catch(() => null) : null;
       sale = {
         ...sale,
         ab_experiment_id: ab.ab_experiment_id,
         ab_assigned_platform: ab.ab_assigned_platform,
-        ...(ab.is_test ? { is_test: true, workspace_id: ab.workspace_id } : {}),
+        ...(ab.is_test ? { is_test: true, workspace_id: testWs ?? ab.workspace_id } : {}),
       };
     }
 
@@ -205,22 +207,35 @@ export class SalesService {
 
   /** A área "Sem área" da usuária (sem pixel), criada na primeira vez. */
   async unassignedArea(userId: string): Promise<string | null> {
+    return this.namedArea(userId, UNASSIGNED_AREA_NAME);
+  }
+
+  /**
+   * A área "Testes" (sem pixel), criada na primeira vez: compra de teste do
+   * A/B mora nela, então some do Dashboard, de Vendas e do Financeiro da área
+   * real sem mexer em nenhuma conta — todas as telas já filtram por área.
+   */
+  async testArea(userId: string): Promise<string | null> {
+    return this.namedArea(userId, TEST_AREA_NAME);
+  }
+
+  private async namedArea(userId: string, name: string): Promise<string | null> {
     const client = this.supabase.getClient();
     const { data: found } = await client
       .from('workspaces')
       .select('id')
       .eq('user_id', userId)
-      .eq('name', UNASSIGNED_AREA_NAME)
+      .eq('name', name)
       .limit(1)
       .maybeSingle();
     if (found) return found.id;
     const { data: created, error } = await client
       .from('workspaces')
-      .insert({ user_id: userId, name: UNASSIGNED_AREA_NAME })
+      .insert({ user_id: userId, name })
       .select('id')
       .single();
     if (error) {
-      this.logger.warn(`Criar area "${UNASSIGNED_AREA_NAME}": ${error.message}`);
+      this.logger.warn(`Criar area "${name}": ${error.message}`);
       return null;
     }
     return created.id;

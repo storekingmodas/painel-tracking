@@ -15,6 +15,7 @@ import {
   verifyTest,
 } from './ab-core';
 import { buildReport, SaleRow } from './ab-report';
+import { TEST_AREA_NAME } from './ab-sale-tag';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CACHE_MS = 30_000;
@@ -413,31 +414,69 @@ export class AbCheckoutService {
     return { url: url.toString(), expires_at: new Date(exp_ms).toISOString() };
   }
 
-  /** Marca (ou desmarca) um pedido como compra de teste, pelo número. */
+  /**
+   * Marca (ou desmarca) um pedido como compra de teste, pelo número, com os
+   * bumps do mesmo pedido. Marcar leva o pedido para a área "Testes" (some das
+   * telas da área real) e guarda a área de origem; desmarcar devolve.
+   */
   async markTest(userId: string, order: string, isTest: boolean) {
-    const o = order.trim();
+    const o = order.trim().replace(/[,()]/g, '');
     if (!o) throw new BadRequestException('Informe o numero do pedido');
     const client = this.supabase.getClient();
-    const { data, error } = await client
+    const cols = 'id, external_id, order_external_id, workspace_id, metadata';
+    const { data: hits, error } = await client
       .from('sales')
-      .update({ is_test: isTest })
+      .select(cols)
       .eq('user_id', userId)
-      .or(`external_id.eq.${o.replace(/[,()]/g, '')},order_external_id.eq.${o.replace(/[,()]/g, '')}`)
-      .select('id, external_id, order_external_id');
+      .or(`external_id.eq.${o},order_external_id.eq.${o}`);
     if (error) throw new Error(error.message);
-    // Os bumps do mesmo pedido vão junto.
-    const orderKeys = [...new Set((data ?? []).map((s: any) => s.order_external_id || s.external_id).filter(Boolean))];
-    let bumps = 0;
-    if (orderKeys.length) {
-      const { data: more } = await client
-        .from('sales')
-        .update({ is_test: isTest })
-        .eq('user_id', userId)
-        .in('order_external_id', orderKeys)
-        .select('id');
-      bumps = (more ?? []).filter((m: any) => !(data ?? []).some((d: any) => d.id === m.id)).length;
+    const orderKeys = [...new Set((hits ?? []).map((s: any) => s.order_external_id || s.external_id).filter(Boolean))];
+    const { data: siblings } = orderKeys.length
+      ? await client.from('sales').select(cols).eq('user_id', userId).in('order_external_id', orderKeys)
+      : { data: [] as any[] };
+    const rows = new Map<string, any>();
+    for (const s of [...(hits ?? []), ...(siblings ?? [])]) rows.set(s.id, s);
+    if (rows.size === 0) return { updated: 0 };
+
+    const testWs = isTest ? await this.testAreaId(userId) : null;
+    for (const s of rows.values()) {
+      const meta = s.metadata ?? {};
+      const update = isTest
+        ? {
+            is_test: true,
+            ...(testWs && s.workspace_id !== testWs
+              ? { workspace_id: testWs, metadata: { ...meta, workspace_antes_do_teste: s.workspace_id } }
+              : {}),
+          }
+        : {
+            is_test: false,
+            ...(meta.workspace_antes_do_teste
+              ? { workspace_id: meta.workspace_antes_do_teste, metadata: { ...meta, workspace_antes_do_teste: undefined } }
+              : {}),
+          };
+      const { error: upErr } = await client.from('sales').update(update).eq('id', s.id);
+      if (upErr) throw new Error(upErr.message);
     }
-    return { updated: (data ?? []).length + bumps };
+    return { updated: rows.size };
+  }
+
+  /** A área "Testes" (sem pixel), criada na primeira vez. */
+  private async testAreaId(userId: string): Promise<string | null> {
+    const client = this.supabase.getClient();
+    const { data: found } = await client
+      .from('workspaces')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('name', TEST_AREA_NAME)
+      .limit(1)
+      .maybeSingle();
+    if (found) return found.id;
+    const { data: created } = await client
+      .from('workspaces')
+      .insert({ user_id: userId, name: TEST_AREA_NAME })
+      .select('id')
+      .single();
+    return created?.id ?? null;
   }
 
   /**

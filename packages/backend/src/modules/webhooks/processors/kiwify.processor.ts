@@ -171,7 +171,7 @@ export class KiwifyProcessor {
 
     const { data: existingSale } = await supabaseAdmin
       .from('sales')
-      .select('id, status')
+      .select('id, status, gross_amount, amount')
       .eq('external_id', orderId)
       .eq('user_id', userId)
       .maybeSingle();
@@ -179,17 +179,28 @@ export class KiwifyProcessor {
     if (existingSale) {
       if (status !== existingSale.status) {
         // Reembolso/chargeback: o valor devolvido entra no relatório do A/B.
-        // A Kiwify devolve o pedido inteiro; o campo de valor parcial, se ela
-        // um dia mandar, tem prioridade.
+        // A Kiwify devolve o item inteiro e não manda o valor no aviso
+        // (conferido em 13/10): vale o bruto do item. Um campo de valor
+        // parcial, se ela um dia mandar, tem prioridade.
         const refunded =
           status === 'refunded'
             ? Number(kiwifyBody.refunded_amount ?? kiwifyBody.Commissions?.refunded_amount ?? NaN)
             : NaN;
+        const itemValue = Number(existingSale.gross_amount ?? existingSale.amount ?? NaN);
         await supabaseAdmin
           .from('sales')
           .update({
             status,
-            ...(status === 'refunded' ? { refunded_amount: Number.isFinite(refunded) && refunded > 0 ? refunded / 100 : null } : {}),
+            ...(status === 'refunded'
+              ? {
+                  refunded_amount:
+                    Number.isFinite(refunded) && refunded > 0
+                      ? refunded / 100
+                      : Number.isFinite(itemValue) && itemValue > 0
+                        ? itemValue
+                        : null,
+                }
+              : {}),
           })
           .eq('id', existingSale.id);
       }
