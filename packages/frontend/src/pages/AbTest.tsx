@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
+import { isSystemArea } from '@/lib/systemAreas';
 
 type Platform = 'hotmart' | 'kiwify';
 type Status = 'draft' | 'active' | 'paused' | 'ended';
@@ -284,7 +285,7 @@ export default function AbTest() {
                 <Label>Área (pixel)</Label>
                 <Select value={form.workspace_id || undefined} onValueChange={(v) => setForm((f) => ({ ...f, workspace_id: v }))}>
                   <SelectTrigger className="h-9"><SelectValue placeholder="Escolher área…" /></SelectTrigger>
-                  <SelectContent>{areas?.areas.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
+                  <SelectContent>{areas?.areas.filter((a) => !isSystemArea(a.name)).map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">

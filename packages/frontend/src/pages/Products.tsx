@@ -10,6 +10,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
+import { isSystemArea, SYSTEM_AREA_NAMES } from '@/lib/systemAreas';
+import { useWorkspaceContext } from '@/contexts/WorkspaceContext';
+import { useNavigate } from 'react-router-dom';
 
 interface ProductRow {
   platform: string;
@@ -72,6 +75,15 @@ export default function Products() {
   };
 
   const pendingTotal = data?.products.reduce((s, p) => s + p.pending, 0) ?? 0;
+
+  // "Sem área" e "Testes" saíram do seletor do menu; daqui ainda se abrem.
+  const { workspaces, setActiveWorkspace } = useWorkspaceContext();
+  const navigate = useNavigate();
+  const systemAreas = SYSTEM_AREA_NAMES.map((n) => workspaces.find((w) => w.name === n)).filter(Boolean) as { id: string; name: string }[];
+  const openArea = (id: string) => {
+    setActiveWorkspace(id);
+    navigate('/sales');
+  };
 
   return (
     <DashboardLayout>
@@ -154,7 +166,7 @@ export default function Products() {
                                 <SelectValue placeholder="Escolher área…" />
                               </SelectTrigger>
                               <SelectContent>
-                                {data.areas.map((a) => (
+                                {data.areas.filter((a) => !isSystemArea(a.name) || a.id === p.workspace_id).map((a) => (
                                   <SelectItem key={a.id} value={a.id}>
                                     {a.name}{a.has_pixel ? '' : ' (sem pixel)'}
                                   </SelectItem>
@@ -171,6 +183,21 @@ export default function Products() {
             )}
           </CardContent>
         </Card>
+
+        {systemAreas.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Áreas do sistema (fora do menu):{' '}
+            {systemAreas.map((a, i) => (
+              <span key={a.id}>
+                {i > 0 && ' · '}
+                <button type="button" className="underline hover:text-foreground" onClick={() => openArea(a.id)}>
+                  ver vendas em "{a.name}"
+                </button>
+              </span>
+            ))}
+            . Para voltar, escolha a área no menu.
+          </p>
+        )}
       </div>
     </DashboardLayout>
   );

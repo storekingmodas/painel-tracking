@@ -5,6 +5,7 @@ import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { usePlanUsage } from '@/hooks/usePlanUsage';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { selectableAreas } from '@/lib/systemAreas';
 import {
   Select,
   SelectContent,
@@ -147,7 +148,7 @@ export function WorkspaceSwitcher({ collapsed, variant = 'sidebar' }: WorkspaceS
                   <SelectValue placeholder="Selecionar área" />
                 </SelectTrigger>
                 <SelectContent>
-                  {workspaces.map((ws) => (
+                  {selectableAreas(workspaces, activeWorkspaceId).map((ws) => (
                     <SelectItem key={ws.id} value={ws.id} className="text-xs">
                       {ws.name}
                     </SelectItem>
@@ -259,7 +260,7 @@ export function WorkspaceSwitcher({ collapsed, variant = 'sidebar' }: WorkspaceS
             <SelectValue placeholder="Selecionar área" />
           </SelectTrigger>
           <SelectContent>
-            {workspaces.map((ws) => (
+            {selectableAreas(workspaces, activeWorkspaceId).map((ws) => (
               <SelectItem key={ws.id} value={ws.id} className="text-xs">
                 {ws.name}
               </SelectItem>
